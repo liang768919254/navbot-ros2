@@ -1,0 +1,25 @@
+# ============================================================
+# 换行符统一：本项目的脚本/配置全部在 Linux 容器里跑，
+# 一旦被 Windows 的 CRLF 污染，运行时会报：
+#     bash: $'\r': command not found
+# 所以这里显式锁死 LF，别删。
+# ============================================================
+
+*.sh          text eol=lf
+*.bash        text eol=lf
+*.py          text eol=lf
+*.yaml        text eol=lf
+*.yml         text eol=lf
+*.xacro       text eol=lf
+*.urdf        text eol=lf
+*.xml         text eol=lf
+*.launch.py   text eol=lf
+
+# ============================================================
+# 二进制文件：禁止换行转换 + 禁止文本 diff/合并
+# ============================================================
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.pgm   binary
