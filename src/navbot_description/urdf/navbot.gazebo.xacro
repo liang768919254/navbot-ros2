@@ -1,0 +1,173 @@
+<?xml version="1.0"?>
+<!--
+  ============================================================================
+  navbot.gazebo.xacro —— navbot 的「仿真驱动 + 传感器」挂载层
+  ============================================================================
+  ★ 为什么不写进 navbot.xacro？
+    URDF 是「描述机器人长什么样」，Gazebo 插件是「描述在仿真里怎么动」。
+    真机上这两个东西完全不同源：
+      · 仿真里 <plugin> 由 Gazebo 加载（.so 文件）
+      · 真机上由你自己的 driver 节点发 /odom + /joint_states
+    所以物理上就该分开写 —— 这份文件只属于仿真，不污染模型本身。
+
+  本文件干三件事：
+    ① libgazebo_ros_diff_drive.so   收 /cmd_vel → 转车轮 → 发 /odom + odom→base_footprint 变换
+    ② libgazebo_ros_ray_sensor.so   仿真出单线激光 → 发 /scan
+    ③ libgazebo_ros_joint_state_publisher.so 发 /joint_states（轮子转起来）
+  ===========================================================================
+-->
+
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <!-- ==========================================================================
+       ① 底盘：Gazebo 需要给整个模型一个「根」。
+          真机上你不需要这段，这是仿真特有的。
+          ★ <gazebo reference="base_footprint"> 必须和模型根 link 同名。
+       ========================================================================== -->
+  <gazebo reference="base_footprint"/>
+
+  <!-- ==========================================================================
+       ② 材质显示（可选，好看而已）
+       ========================================================================== -->
+  <gazebo reference="base_link">
+    <material>Gazebo/Blue</material>
+  </gazebo>
+  <gazebo reference="laser_link">
+    <material>Gazebo/Red</material>
+  </gazebo>
+
+  <!-- 轮子摩擦力：★ 这个不是装饰！默认 urdf 轮子摩擦力偏小，
+       仿真里会出现「原地打滑 / 车不动但轮在转」，是新手最常见的仿真假故障。 -->
+  <gazebo reference="left_wheel_link">
+    <material>Gazebo/Black</material>
+    <mu1>0.8</mu1>
+    <mu2>0.8</mu2>
+  </gazebo>
+  <gazebo reference="right_wheel_link">
+    <material>Gazebo/Black</material>
+    <mu1>0.8</mu1>
+    <mu2>0.8</mu2>
+  </gazebo>
+
+  <!-- ==========================================================================
+       ③ ★★ 差速驱动插件 —— 仿真里「虚机底盘」的替身
+          ★ 参数名以本机头文件为准：
+            /opt/ros/humble/include/gazebo_plugins/gazebo_ros_diff_drive.hpp
+            里那段 Example Usage 就是权威清单，别照抄网络教程里的 ROS1 写法。
+       ========================================================================== -->
+  <gazebo>
+    <plugin name="diff_drive" filename="libgazebo_ros_diff_drive.so">
+
+      <ros>
+        <!-- 不加命名空间，话题直接落在 /cmd_vel、/odom -->
+        <remapping>cmd_vel:=cmd_vel</remapping>
+        <remapping>odom:=odom</remapping>
+      </ros>
+
+      <!-- 插件的计算频率。50Hz 足够，太高会拖慢仿真 -->
+      <update_rate>50</update_rate>
+
+      <!-- ★ 这两个名字必须和 navbot.xacro 里的 joint 名完全一致，
+           写错的表现是：仿真里车纹丝不动，而 Gazebo 日志里
+           有一行 "Joint [...] not found"，很容易被忽略 -->
+      <left_joint>left_wheel_joint</left_joint>
+      <right_joint>right_wheel_joint</right_joint>
+
+      <!-- ★★ 运动学三件套 —— 必须和 URDF 里的尺寸一致，
+           否则算出来的里程计是系统偏差（车实际走 1m，/odom 报 0.9m）。
+           本模型：wheel_sep=0.16，wheel_r=0.0325 → diameter=0.065 -->
+      <wheel_separation>0.16</wheel_separation>
+      <wheel_diameter>0.065</wheel_diameter>
+
+      <!-- 力矩上限与加速度上限：太小爬不上坡，太大会瞬间打滑 -->
+      <max_wheel_torque>5.0</max_wheel_torque>
+      <max_wheel_acceleration>1.0</max_wheel_acceleration>
+
+      <!-- 输入 -->
+      <command_topic>cmd_vel</command_topic>
+
+      <!-- 输出：★ publish_odom_tf 是整个 TF 树能不能闭合的关键
+           true  → 插件自己广播 odom → base_footprint
+           false → 这棵树就断在 odom，Nav2 会一直报
+                   "Timed out waiting for transform from base_footprint to odom" -->
+      <publish_odom>true</publish_odom>
+      <publish_odom_tf>true</publish_odom_tf>
+      <publish_wheel_tf>true</publish_wheel_tf>
+
+      <odometry_topic>odom</odometry_topic>
+      <odometry_frame>odom</odometry_frame>
+      <robot_base_frame>base_footprint</robot_base_frame>
+
+    </plugin>
+  </gazebo>
+
+  <!-- ==========================================================================
+       ④ 关节状态发布器 —— 让轮子在 RViz / TF 里真的转起来
+          没有它，/joint_states 是空的，RViz 里模型两个轮子永远不动。
+       ========================================================================== -->
+  <gazebo>
+    <plugin name="joint_state_publisher" filename="libgazebo_ros_joint_state_publisher.so">
+      <ros>
+        <remapping>~/out:=joint_states</remapping>
+      </ros>
+      <update_rate>30</update_rate>
+      <joint_name>left_wheel_joint</joint_name>
+      <joint_name>right_wheel_joint</joint_name>
+    </plugin>
+  </gazebo>
+
+  <!-- ==========================================================================
+       ⑤ ★★ 单线激光雷达（gpu_ray）
+          ★ 参数名以本机头文件为准：
+            /opt/ros/humble/include/gazebo_plugins/gazebo_ros_ray_sensor.hpp
+          两个关键参数：
+            <output_type>  sensor_msgs/LaserScan  ← 不写默认是 PointCloud2，
+                           那样 /scan 话题根本不会出现，Nav2 直接瞎。
+            <frame_name>   laser_link  ← 不写就取「父 link 名」，
+                           恰好也是 laser_link，但显式写出来更保险。
+       ========================================================================== -->
+  <gazebo reference="laser_link">
+    <!-- ★ 无头环境（容器/服务器，无 X11 显示）必须用 ray（CPU 激光）而非 gpu_ray。
+         gpu_ray 依赖 GPU 渲染引擎，无头时 RenderEngine 被禁用（render path NONE），
+         传感器发不出光线 → /scan 话题一直 empty。
+         ray 走 CPU 光线投射，无头也能跑；有 GPU 的桌面环境想更快再换回 gpu_ray。 -->
+    <sensor name="laser" type="ray">
+      <pose>0 0 0 0 0 0</pose>
+      <visualize>false</visualize>
+      <update_rate>10</update_rate>
+      <ray>
+        <scan>
+          <horizontal>
+            <!-- 360 线，水平全向扫描 —— 和 RPLIDAR A1 一致 -->
+            <samples>360</samples>
+            <resolution>1</resolution>
+            <min_angle>-3.14159</min_angle>
+            <max_angle>3.14159</max_angle>
+          </horizontal>
+        </scan>
+        <range>
+          <!-- ★ 量程必须比「地图最大尺寸」大，否则走廊尽头的墙看不见。
+               同时不能小于 Nav2 参数里的 raytrace_max_range，
+               否则代价地图会一直「擦不掉」已经走过的障碍 -->
+          <min>0.12</min>
+          <max>12.0</max>
+        </range>
+        <noise>
+          <!-- 加噪声很重要：零噪声的完美激光会让你在仿真里调得很顺、
+               上真机立刻崩。这里模拟 RPLIDAR 的典型 σ。 -->
+          <type>gaussian</type>
+          <mean>0.0</mean>
+          <stddev>0.01</stddev>
+        </noise>
+      </ray>
+      <plugin name="laser_controller" filename="libgazebo_ros_ray_sensor.so">
+        <ros>
+          <remapping>~/out:=scan</remapping>
+        </ros>
+        <output_type>sensor_msgs/LaserScan</output_type>
+        <frame_name>laser_link</frame_name>
+      </plugin>
+    </sensor>
+  </gazebo>
+
+</robot>

@@ -1,0 +1,33 @@
+cmake_minimum_required(VERSION 3.8)
+project(navbot_description)
+
+if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+  add_compile_options(-Wall -Wextra -Wpedantic)
+endif()
+
+# find dependencies
+find_package(ament_cmake REQUIRED)
+find_package(urdf REQUIRED)
+find_package(xacro REQUIRED)
+
+if(BUILD_TESTING)
+  find_package(ament_lint_auto REQUIRED)
+  # the following line skips the linter which checks for copyrights
+  # comment the line when a copyright and license is added to all source files
+  set(ament_cmake_copyright_FOUND TRUE)
+  # the following line skips cpplint (only works in a git repo)
+  # comment the line when this package is in a git repo and when
+  # a copyright and license is added to all source files
+  set(ament_cmake_cpplint_FOUND TRUE)
+  ament_lint_auto_find_test_dependencies()
+endif()
+
+# ★ 把 launch / urdf / rviz 目录装到 share 下
+#   没有这段：colcon build 会成功，但 ros2 launch 报
+#   "file 'xxx.launch.py' was not found in the share directory"
+install(
+  DIRECTORY launch urdf rviz
+  DESTINATION share/${PROJECT_NAME}
+)
+
+ament_package()

@@ -1,0 +1,114 @@
+# ============================================================================
+# navbot_slam.rviz —— 阶段 C 用：建图时盯住「地图长出来了没」
+# ============================================================================
+# ★ 和阶段 A 那份的关键区别只有一处：
+#     Fixed Frame 从 base_footprint 改成 map
+#   为什么：建图时我们要看「地图」这个全局坐标系。
+#   如果还用 base_footprint，地图会看起来「车不动、地图在转」，无法判断建图质量。
+# ============================================================================
+Panels:
+  - Class: rviz_common/Displays
+    Name: Displays
+  - Class: rviz_common/Views
+    Name: Views
+
+Visualization Manager:
+  Class: ""
+  Displays:
+    - Class: rviz_default_plugins/Grid
+      Name: Grid
+      Enabled: true
+      Alpha: 0.3
+      Cell Size: 1
+      Color: 160; 160; 160
+      Line Style:
+        Line Width: 0.03
+        Value: Lines
+      Plane: XY
+      Plane Cell Count: 20
+      Reference Frame: <Fixed Frame>
+
+    # ------------------------------------------------------------------
+    # ★★ 地图：建图的结果就在这里长出来
+    #   Durability Policy 必须是 Transient Local —— 这是 latched topic 的
+    #   ROS2 叫法。设错的表现是「地图只在重启 RViz 时才显示一次」。
+    #   ★ 灰=未知(-1)，白=可走(0)，黑=障碍(100)
+    # ------------------------------------------------------------------
+    - Class: rviz_default_plugins/Map
+      Name: Map
+      Enabled: true
+      Topic:
+        Depth: 1
+        Durability Policy: Transient Local
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /map
+      Alpha: 0.7
+      Color Scheme: map
+      Draw Behind: true
+      Update Topic:
+        Depth: 5
+        Value: /map_updates
+
+    # ★ 激光：这是建图的「原料」
+    - Class: rviz_default_plugins/LaserScan
+      Name: LaserScan
+      Enabled: true
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Best Effort
+        Value: /scan
+      Style: Points
+      Size (Pixels): 3
+      Color Transformer: FlatColor
+      Color: 0; 255; 0
+      Decay Time: 0
+
+    - Class: rviz_default_plugins/RobotModel
+      Name: RobotModel
+      Enabled: true
+      Description Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /robot_description
+      Visual Enabled: true
+
+    - Class: rviz_default_plugins/TF
+      Name: TF
+      Enabled: true
+      Show Arrows: false
+      Show Axes: true
+      Show Names: false
+      Marker Scale: 0.5
+      Frame Timeout: 15
+
+  Global Options:
+    # ★★ 建图模式：必须 map
+    Fixed Frame: map
+    Background Color: 48; 48; 48
+    Frame Rate: 30
+
+  Tools:
+    - Class: rviz_default_plugins/Interact
+    - Class: rviz_default_plugins/MoveCamera
+    - Class: rviz_default_plugins/Select
+    - Class: rviz_default_plugins/SetInitialPose
+    - Class: rviz_default_plugins/GoalTool
+
+  Views:
+    Current:
+      Class: rviz_default_plugins/TopDownOrtho
+      Name: Current View
+      Scale: 60
+      Target Frame: <Fixed Frame>
+      X: 0
+      Y: 0
+    Saved: ~
+
+Window Geometry:
+  Height: 900
+  Width: 1500

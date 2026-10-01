@@ -1,0 +1,25 @@
+# ==== ROS2 构建产物（可再生成，勿提交）====
+build/
+install/
+log/
+
+# ==== Python ====
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+.pytest_cache/
+
+# ==== 无硬件自测的临时日志 ====
+无硬件自测/_e2e_logs/
+
+# ==== 地图产物 ====
+# navbot_room.pgm 是 map_saver 建图生成的二进制大文件，可重新生成。
+# 如果想把地图也纳入版本管理，删掉下面这行即可（yaml 建议保留）。
+maps/*.pgm
+
+# ==== 编辑器 / 系统 ====
+.vscode/
+.idea/
+*.swp
+.DS_Store

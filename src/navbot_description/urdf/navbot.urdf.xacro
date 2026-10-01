@@ -1,0 +1,28 @@
+<?xml version="1.0"?>
+<!--
+  ============================================================================
+  navbot.urdf.xacro —— 顶层装配文件（仿真用）
+  ============================================================================
+  它只干一件事：把「模型」和「仿真挂载层」拼在一起，然后交给 xacro 展开。
+
+  ★ 为什么要单独一个顶层文件，不把两个合一个？
+    因为这层「拼装」是唯一随场景变化的东西：
+      仿真  → navbot.urdf.xacro        （含 gazebo 插件）
+      真机  → navbot.urdf.xacro 的"去掉 include 第二行"版本
+    有了这层，navbot.xacro（模型本体）在仿真和真机之间完全复用 —— 一字不改。
+
+  校验：
+    xacro navbot.urdf.xacro > /tmp/navbot_check.urdf
+    check_urdf /tmp/navbot_check.urdf
+  ===========================================================================
+-->
+<robot name="navbot" xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <!-- ① 模型本体：连杆 + 关节（仿真/真机共用） -->
+  <xacro:include filename="$(find navbot_description)/urdf/navbot.xacro"/>
+
+  <!-- ② 仿真挂载：差速插件 + 激光 + 关节状态（只有仿真需要）
+          ★ 真机时把下面这一行注释掉即可，其余代码一字不动 -->
+  <xacro:include filename="$(find navbot_description)/urdf/navbot.gazebo.xacro"/>
+
+</robot>

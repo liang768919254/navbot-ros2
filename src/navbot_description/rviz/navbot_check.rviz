@@ -1,0 +1,124 @@
+# ============================================================================
+# navbot_check.rviz —— 阶段 A 用：只看模型和坐标系树
+# ============================================================================
+# 这份配置的 Fixed Frame 是 base_footprint，只开三样：
+#   RobotModel / TF / LaserScan
+# ★ 为什么这份要"极简"：阶段 A 的目的只有一个 —— 确认坐标系树画对了。
+#   面板越少，出错时越容易定位。
+# ============================================================================
+Panels:
+  - Class: rviz_common/Displays
+    Name: Displays
+    Property Tree Widget:
+      Expanded: ~
+  - Class: rviz_common/Views
+    Name: Views
+
+Visualization Manager:
+  Class: ""
+  Displays:
+    # ------------------------------------------------------------------
+    # 网格：地面参考，1m 一格
+    # ------------------------------------------------------------------
+    - Class: rviz_default_plugins/Grid
+      Name: Grid
+      Enabled: true
+      Alpha: 0.4
+      Cell Size: 1
+      Color: 160; 160; 160
+      Line Style:
+        Line Width: 0.03
+        Value: Lines
+      Plane: XY
+      Plane Cell Count: 10
+      Reference Frame: <Fixed Frame>
+
+    # ------------------------------------------------------------------
+    # ★ 机器人模型：Topic 必须是 /robot_description
+    #   ★ 看不到模型的三步排查顺序（顺序很重要，从便宜的查起）：
+    #     1. Fixed Frame 是不是空的 / 是不是写了不存在的坐标系
+    #     2. ros2 topic echo /robot_description --once 有没有输出
+    #     3. /joint_states 有没有数据（ros2 topic hz /joint_states）
+    # ------------------------------------------------------------------
+    - Class: rviz_default_plugins/RobotModel
+      Name: RobotModel
+      Enabled: true
+      Description Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /robot_description
+      Visual Enabled: true
+      Collision Enabled: false
+      Update Interval: 0
+
+    # ------------------------------------------------------------------
+    # ★★ TF 显示：本项目最该盯住的面板
+    #   Frames 里能看到 base_footprint→base_link→laser_link 这条链
+    #   ★ 判据：连线是「完整的树」还是「断掉的几截」
+    #     断掉 = 有节点的 TF 没发出来，Nav2 一定会超时
+    # ------------------------------------------------------------------
+    - Class: rviz_default_plugins/TF
+      Name: TF
+      Enabled: true
+      Show Arrows: false
+      Show Axes: true
+      Show Names: true
+      Marker Scale: 0.3
+      Update Interval: 0
+      Frame Timeout: 15
+
+    # ------------------------------------------------------------------
+    # 激光点云（阶段 A 没有雷达数据，这里是空的，但配置放着）
+    #   ★ Size 设 0.03 就够，太大会糊成一片看不清形状
+    #   ★ Style 用 Points 而不是 Spheres —— Spheres 在核显上会掉帧
+    # ------------------------------------------------------------------
+    - Class: rviz_default_plugins/LaserScan
+      Name: LaserScan
+      Enabled: true
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Best Effort
+        Value: /scan
+      Style: Points
+      Size (Pixels): 3
+      Color Transformer: FlatColor
+      Color: 255; 0; 0
+      Decay Time: 0
+      Position Transformer: XYZ
+      Selectable: true
+
+  Global Options:
+    # ★★ 这一行是所有 RViz 问题的源头。
+    #   Fixed Frame 写错 → 一片空白 + 状态栏 "Fixed Frame [xxx] does not exist"
+    #   阶段 A 看模型用 base_footprint；
+    #   阶段 D 导航看地图必须改成 map，否则地图和车对不上
+    Fixed Frame: base_footprint
+    Background Color: 48; 48; 48
+    Frame Rate: 30
+
+  Tools:
+    - Class: rviz_default_plugins/Interact
+    - Class: rviz_default_plugins/MoveCamera
+    - Class: rviz_default_plugins/Select
+
+  Views:
+    Current:
+      Class: rviz_default_plugins/Orbit
+      Name: Current View
+      Distance: 1.8
+      Focal Point:
+        X: 0
+        Y: 0
+        Z: 0.1
+      Pitch: 0.45
+      Yaw: 0.8
+      Target Frame: base_footprint
+    Saved: ~
+
+Window Geometry:
+  Height: 900
+  Width: 1500

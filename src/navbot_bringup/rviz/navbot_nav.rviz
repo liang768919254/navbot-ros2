@@ -1,0 +1,195 @@
+# ============================================================================
+# navbot_nav.rviz —— 阶段 D 用：自主导航的「驾驶舱」
+# ============================================================================
+# 打开它就能：① 看地图 + 车在哪  ② 点 "2D Pose Estimate" 给初始位姿
+#             ③ 点 "Nav2 Goal" 发目标点  ④ 看全局路径 / 局部轨迹 / 代价地图
+#
+# ★★ 第一次打开务必按这个顺序操作，顺序错了会误判很多事：
+#   1. 确认 Fixed Frame = map（本配置已设好）
+#   2. 点 "2D Pose Estimate"，在地图上按车的实际位置拖一个箭头
+#   3. 等 1~2 秒，看红色激光点是否和地图上的墙贴合 → 贴合说明定位对了
+#   4. 才去点 "Nav2 Goal" 发目标
+#   ★ 跳过第 2、3 步直接发目标 = 必失败，而且报错信息和你想象的完全不同
+# ============================================================================
+Panels:
+  - Class: rviz_common/Displays
+    Name: Displays
+  - Class: rviz_common/Views
+    Name: Views
+  # ★ Nav2 自带的「一键导航」面板，需要 nav2_rviz_plugins
+  - Class: nav2_rviz_plugins/Navigation 2
+    Name: Navigation 2
+
+Visualization Manager:
+  Class: ""
+  Displays:
+    - Class: rviz_default_plugins/Grid
+      Name: Grid
+      Enabled: true
+      Alpha: 0.3
+      Cell Size: 1
+      Color: 160; 160; 160
+      Line Style:
+        Line Width: 0.03
+        Value: Lines
+      Plane: XY
+      Plane Cell Count: 30
+      Reference Frame: <Fixed Frame>
+
+    # ★ 地图：Durability 必须是 Transient Local
+    - Class: rviz_default_plugins/Map
+      Name: Map
+      Enabled: true
+      Topic:
+        Depth: 1
+        Durability Policy: Transient Local
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /map
+      Alpha: 0.7
+      Color Scheme: map
+      Draw Behind: true
+
+    # ------------------------------------------------------------------
+    # ★★ 全局代价地图：看清楚「哪些地方被判定为不可走」
+    #   调试「过不去」问题的第一现场：
+    #   如果目标点周围一圈都是蓝紫色（膨胀区），就是 inflation 太大
+    #   —— 本项目「窄通道」考点就靠这个面板看出来
+    # ------------------------------------------------------------------
+    - Class: rviz_default_plugins/Map
+      Name: GlobalCostmap
+      Enabled: true
+      Topic:
+        Depth: 1
+        Durability Policy: Transient Local
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /global_costmap/costmap
+      Alpha: 0.5
+      Color Scheme: costmap
+      Draw Behind: false
+
+    # ★ 局部代价地图：滚动窗口，跟着车走
+    - Class: rviz_default_plugins/Map
+      Name: LocalCostmap
+      Enabled: true
+      Topic:
+        Depth: 1
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /local_costmap/costmap
+      Alpha: 0.5
+      Color Scheme: costmap
+      Draw Behind: false
+
+    # ★★ 全局路径：规划器算出来的那条线。看到它 = 规划成功
+    #   看不到它但发了目标 → 规划失败，去看 planner_server 的日志
+    - Class: rviz_default_plugins/Path
+      Name: GlobalPlan
+      Enabled: true
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /plan
+      Color: 0; 255; 0
+      Line Style: Lines
+      Line Width: 0.03
+
+    # ★ 局部轨迹：DWB 选出的那条。抖动/画圈时看它最直观
+    - Class: rviz_default_plugins/Path
+      Name: LocalPlan
+      Enabled: true
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /local_plan
+      Color: 255; 170; 0
+      Line Style: Lines
+      Line Width: 0.02
+
+    # ★ 粒子云：AMCL 的 2000 个粒子。收敛时应该缩成一小团
+    #   ★★ 如果一直散成一大片 = 定位没收敛，先别发目标
+    - Class: rviz_default_plugins/PoseArray
+      Name: ParticleCloud
+      Enabled: true
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /particle_cloud
+      Shape: Arrow (Flat)
+      Color: 255; 255; 0
+      Alpha: 0.5
+      Arrow Length: 0.1
+
+    - Class: rviz_default_plugins/LaserScan
+      Name: LaserScan
+      Enabled: true
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Best Effort
+        Value: /scan
+      Style: Points
+      Size (Pixels): 3
+      Color Transformer: FlatColor
+      Color: 255; 0; 0
+      Decay Time: 0
+
+    - Class: rviz_default_plugins/RobotModel
+      Name: RobotModel
+      Enabled: true
+      Description Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /robot_description
+      Visual Enabled: true
+
+    - Class: rviz_default_plugins/TF
+      Name: TF
+      Enabled: false
+      Show Arrows: false
+      Show Axes: true
+      Show Names: false
+      Marker Scale: 0.5
+
+  Global Options:
+    # ★★ 导航模式：必须 map。写成 base_footprint 会让地图和车错位
+    Fixed Frame: map
+    Background Color: 48; 48; 48
+    Frame Rate: 30
+
+  Tools:
+    - Class: rviz_default_plugins/Interact
+    - Class: rviz_default_plugins/MoveCamera
+    - Class: rviz_default_plugins/Select
+    # ★★ 这两个是导航必用的：
+    #   SetInitialPose  → 界面显示为 "2D Pose Estimate"
+    #   GoalTool        → Nav2 会替换成 "Nav2 Goal"
+    - Class: rviz_default_plugins/SetInitialPose
+      Topic:
+        Value: /initialpose
+    - Class: rviz_default_plugins/GoalTool
+
+  Views:
+    Current:
+      Class: rviz_default_plugins/TopDownOrtho
+      Name: Current View
+      Scale: 60
+      Target Frame: <Fixed Frame>
+      X: 0
+      Y: 0
+    Saved: ~
+
+Window Geometry:
+  Height: 900
+  Width: 1500

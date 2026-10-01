@@ -1,0 +1,42 @@
+# ============================================================================
+# navbot_room.yaml —— 地图元数据（配 navbot_room.pgm 使用）
+# ============================================================================
+# ★★ 这个文件是 map_saver 会自动生成的，正常不用手写。
+#    这里放一份「参数说明版」，因为地图的这几个数字直接决定
+#    建图结果和 Nav2 的一致性，值得逐项搞懂。
+#
+# ★★★ 最重要的一条：resolution 必须和建图时 slam_toolbox 的
+#      resolution 完全一致（都是 0.05）。不一致 → 地图被缩放，
+#      所有距离都错 → 规划出的路径撞墙。
+#
+# ----------------------------------------------------------------------------
+# 正常生成方式（建图跑完后，在终端执行）：
+#
+#   # 1) 确认 slam_toolbox 还活着（★ 它挂了就没有 /map 可存）
+#   ros2 node list | grep slam_toolbox
+#
+#   # 2) 存图（-f 后面是输出路径前缀，会生成 .pgm + .yaml 两个文件）
+#   cd ~/bridge/ros_study/src/navbot_bringup/maps
+#   ros2 run nav2_map_server map_saver_cli -f navbot_room
+#
+#   # 3) 确认生成
+#   ls -l navbot_room.pgm navbot_room.yaml
+#   file navbot_room.pgm     # 应该是 "Netpbm image data, size = W x H"
+#
+# ★ 常见坑：map_saver_cli 报 "Failed to save the map: Map not received"
+#   → 原因：slam_toolbox 已经退出，或 /map 还没发过第一帧。
+#     解决：先确认 ros2 topic hz /map 有数据（约 0.2Hz，5秒一帧），再存。
+# ============================================================================
+
+image: navbot_room.pgm
+resolution: 0.05          # ★★ 米/像素。必须 = slam_toolbox 的 resolution
+origin: [-3.5, -3.0, 0.0] # 地图左下角在 map 坐标系里的位姿 [x, y, yaw]
+                          # ★ 由 map_saver 自动填写，不要手改
+negate: 0                 # 0 = 白底黑墙（正常）；1 = 反色
+                          # ★ 搞反的表现：整个地图看起来是"负片"，
+                          #   Nav2 会把所有空地当障碍，一步都走不了
+occupied_thresh: 0.65     # 占用概率 > 0.65 判为「障碍」（黑）
+free_thresh: 0.25         # 占用概率 < 0.25 判为「可走」（白）
+                          # ★ 中间那段 (0.25, 0.65) 判为「未知」（灰）
+                          #   track_unknown_space: true 时未知区域不可通行
+                          #   —— 建图没扫到的地方就是这里

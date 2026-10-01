@@ -1,0 +1,143 @@
+<?xml version="1.0"?>
+<robot name="navbot" xmlns:xacro="http://www.ros.org/wiki/xacro">
+    <link name="base_footprint"/>
+
+    <joint name="base_joint" type="fixed">
+        <parent link="base_footprint"/>
+        <child link="base_link"/>
+        <!-- 位姿:child 相对于 parent,子坐标在父坐标系里,位置在哪,转没转--> 
+        <!-- 中心高度: 底面离地 + 半厚度  -->
+        <origin xyz="0.0 0.0 0.05" rpy="0 0 0"/>
+    </joint>
+
+    <!-- box_inertia（长方体，三个轴各不同）宏 -->
+    <xacro:macro name="box_inertia" params="m x y z">
+        <inertial>            
+        <origin xyz="0.0 0.0 0.0" rpy="0.0 0.0 0.0"/>
+        <mass value="${m}"/>
+        <inertia ixx="${m * (y*y + z*z) / 12}" 
+                 ixy="0.0" ixz="0.0" iyy="${m * (x*x + z*z) / 12}"
+                 iyz="0.0" izz="${m * (x*x + y*y) / 12}"/>
+        </inertial>    
+    </xacro:macro>
+
+
+    <link name="base_link" > 
+        <!-- 视觉: 底盘几何长度 -->
+        <visual>
+            <geometry><box size="0.30 0.24 0.06"/></geometry>
+        </visual>
+        <!-- 碰撞:  -->
+        <collision>
+            <geometry><box size="0.30 0.24 0.06"/></geometry>
+        </collision>
+        <xacro:box_inertia m="1.2" x="0.30" y="0.24" z="0.06"/>  
+    </link>
+
+    <!-- cyl_inertia（圆柱，轴沿 Z）宏 -->
+    <xacro:macro name="cyl_inertia" params="m r h">
+        <inertial>            
+        <origin xyz="0.0 0.0 0.0" rpy="0.0 0.0 0.0"/>
+        <mass value="${m}"/>
+        <inertia ixx="${m * (3*r*r + h*h) / 12}" 
+                 ixy="0.0" ixz="0.0" iyy="${m * (3*r*r + h*h) / 12}"
+                 iyz="0.0" izz="${m*r*r / 2}"/>
+        </inertial>    
+    </xacro:macro>
+
+
+    <!-- 左右轮：用宏 -->
+    <xacro:macro name="wheel" params="prefix side" >
+        <link name="${prefix}_wheel_link">
+                <visual>
+                    <!-- 以弧度为单位指定滚动、俯仰和偏航旋转。 -->
+                    <!-- 格式：rpy="横滚 俯仰 偏航"（以空格分隔的值）
+                    注意：旋转顺序为：偏航（Z轴）、俯仰（Y轴）、滚转（X轴） -->
+                    <!-- 圆柱的默认轴沿 Z。但轮子要「横躺」着滚，轴得朝 Y。所以要绕 X 轴转 -90°。 -->            
+                    <origin rpy="-1.57079632679 0.0 0.0"/>
+                    <geometry><cylinder radius="0.0325" length="0.026"/></geometry>
+                </visual>
+                <collision>
+                    <origin rpy="-1.57079632679 0.0 0.0"/>
+                    <geometry><cylinder radius="0.0325" length="0.026"/></geometry>
+                </collision>
+        <xacro:cyl_inertia m="0.15"  r="0.0325" h="0.026"/>                  
+        </link>
+
+        <joint name="${prefix}_wheel_joint" type="continuous">
+                <parent link="base_link"/>
+                <child link="${prefix}_wheel_link"/>
+                <origin xyz="0.0 ${side * 0.16 / 2} -0.0175" rpy="0.0 0.0 0.0"/>
+                <axis xyz="0.0 1.0 0.0"/>
+                <limit effort="5.0" velocity="20.0"/>
+        </joint>                    
+    </xacro:macro>
+
+    <xacro:wheel prefix="left" side="1"/>
+    <xacro:wheel prefix="right" side="-1"/>
+
+    <!-- sphere_inertia（球）​ 宏 -->
+    <xacro:macro name="sphere_inertia" params="m r">
+        <inertial>            
+        <origin xyz="0.0 0.0 0.0" rpy="0.0 0.0 0.0"/>
+        <mass value="${m}"/>
+        <inertia ixx="${2*m*r*r  / 5}" 
+                 ixy="0.0" ixz="0.0" iyy="${2*m*r*r  / 5}"
+                 iyz="0.0" izz="${2*m*r*r  / 5}"/>
+        </inertial>    
+    </xacro:macro>
+
+    <!-- 前后万向球：用宏 -->
+    <xacro:macro name="caster" params="prefix x_pos">
+        <link name="${prefix}_caster_link">
+                <visual>
+                    <!-- 以弧度为单位指定滚动、俯仰和偏航旋转。 -->
+                    <!-- 格式：rpy="横滚 俯仰 偏航"（以空格分隔的值）
+                    注意：旋转顺序为：偏航（Z轴）、俯仰（Y轴）、滚转（X轴） -->
+                    <!-- 球心离地 = 半径 0.015，那相对 base_link 的 z = ？前后位置 x_pos = ±0.115。 -->            
+                    <origin xyz="0.0 0.0 0.0" rpy="0.0 0.0 0.0"/>
+                    <geometry><sphere radius="0.015" /></geometry>
+                </visual>
+                <collision>
+                    <origin xyz="0.0 0.0 0.0" rpy="0.0 0.0 0.0"/>
+                    <geometry><sphere radius="0.015"/></geometry>
+                </collision>
+        <xacro:sphere_inertia m="0.03" r="0.015"/>                  
+        </link>
+
+        <joint name="${prefix}_caster_joint" type="fixed">
+                <parent link="base_link"/>
+                <child link="${prefix}_caster_link"/>
+                <origin xyz="${x_pos} 0 -0.035" rpy="0.0 0.0 0.0"/>
+        </joint>                    
+    </xacro:macro>
+
+    <xacro:caster prefix="front" x_pos="0.115"/>
+    <xacro:caster prefix="back"  x_pos="-0.115"/>   
+
+    <!-- ★ 命名约定：必须叫 laser_link（不是 lidar_link）
+         navbot.gazebo.xacro 里激光传感器插件用 reference="laser_link" 挂接，
+         文档验收 A-2 也要求 TF 树里有 laser_link 这条链 -->
+    <link name="laser_link">
+        <!-- 视觉: 激光雷达几何长度 -->
+        <visual>
+            <origin xyz="0.0 0.0 0.0"/>    
+            <geometry><cylinder radius="0.035" length="0.04"/></geometry>
+        </visual>
+        <!-- 碰撞:  -->
+        <collision>
+            <origin xyz="0.0 0.0 0.0"/>       
+            <geometry><cylinder radius="0.035" length="0.04"/></geometry>
+        </collision>
+
+        <xacro:cyl_inertia m="0.10" r="0.035" h="0.04"/>
+    </link>
+
+    <joint name="laser_joint" type="fixed">
+        <parent link="base_link"/>
+        <child link="laser_link"/>
+        <origin xyz="0.04 0 0.05" rpy="0 0 0"/>
+    </joint>
+
+
+</robot>

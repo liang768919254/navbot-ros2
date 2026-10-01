@@ -1,0 +1,196 @@
+<?xml version="1.0" ?>
+<!--
+  ============================================================================
+  navbot_room.world —— 建图/导航练习用的「小房间」
+  ============================================================================
+  ★ 设计原则：这个房间是给 SLAM 和 Nav2 练手用的，不是越复杂越好。
+    它必须同时满足四个条件，缺一个你就会白折腾几天：
+
+    ① 有「闭环」结构   —— 一圈能绕回来，slam_toolbox 才能做回环检测，
+                          否则永远建不出一张能用的图
+    ② 有「窄通道」     —— 检验代价地图的膨胀层（inflation）参数
+    ③ 有「开阔区」     —— 检验全局规划的平滑度
+    ④ 有「可分辨特征」 —— 墙不能全是白的，要有凸起/柱子，
+                          否则 AMCL 粒子会发散（丢定位）
+
+  ★ Gazebo Classic 的 SDF 版本是 1.6；不要用 1.9 语法（那是 gz sim 的）
+  ===========================================================================
+-->
+<sdf version="1.6">
+  <world name="navbot_room">
+
+    <!-- ======================================================================
+         物理引擎
+         ====================================================================== -->
+    <physics type="ode">
+      <max_step_size>0.001</max_step_size>
+      <real_time_factor>1.0</real_time_factor>
+      <real_time_update_rate>1000</real_time_update_rate>
+    </physics>
+
+    <!-- ======================================================================
+         光照 + 地面
+         ====================================================================== -->
+    <include>
+      <uri>model://sun</uri>
+    </include>
+
+    <include>
+      <uri>model://ground_plane</uri>
+    </include>
+
+    <!-- ======================================================================
+         ★★ 房间外壳：6m × 5m，外墙高 0.5m
+             —— 为什么只要 0.5m 高？因为激光雷达是 2D 的，只扫一个平面。
+                墙高 0.5m 足够挡住激光，又不会挡住 RViz 里从上往下看。
+         ====================================================================== -->
+    <model name="wall_north">
+      <static>true</static>
+      <pose>0 2.5 0.25 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry><box><size>6.0 0.1 0.5</size></box></geometry>
+        </collision>
+        <visual name="visual">
+          <geometry><box><size>6.0 0.1 0.5</size></box></geometry>
+          <material><ambient>0.7 0.7 0.7 1</ambient><diffuse>0.9 0.9 0.9 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="wall_south">
+      <static>true</static>
+      <pose>0 -2.5 0.25 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry><box><size>6.0 0.1 0.5</size></box></geometry>
+        </collision>
+        <visual name="visual">
+          <geometry><box><size>6.0 0.1 0.5</size></box></geometry>
+          <material><ambient>0.7 0.7 0.7 1</ambient><diffuse>0.9 0.9 0.9 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="wall_east">
+      <static>true</static>
+      <pose>3.0 0 0.25 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry><box><size>0.1 5.0 0.5</size></box></geometry>
+        </collision>
+        <visual name="visual">
+          <geometry><box><size>0.1 5.0 0.5</size></box></geometry>
+          <material><ambient>0.7 0.7 0.7 1</ambient><diffuse>0.9 0.9 0.9 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="wall_west">
+      <static>true</static>
+      <pose>-3.0 0 0.25 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry><box><size>0.1 5.0 0.5</size></box></geometry>
+        </collision>
+        <visual name="visual">
+          <geometry><box><size>0.1 5.0 0.5</size></box></geometry>
+          <material><ambient>0.7 0.7 0.7 1</ambient><diffuse>0.9 0.9 0.9 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- ======================================================================
+         内部隔断：造出「窄通道」和「闭环」
+         ====================================================================== -->
+    <model name="partition_mid">
+      <static>true</static>
+      <pose>-0.5 0.5 0.25 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry><box><size>2.6 0.1 0.5</size></box></geometry>
+        </collision>
+        <visual name="visual">
+          <geometry><box><size>2.6 0.1 0.5</size></box></geometry>
+          <material><ambient>0.8 0.6 0.3 1</ambient><diffuse>0.9 0.7 0.4 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- 短隔断：和 partition_mid 之间留出约 0.6m 的通道
+         ★ 0.6m 是刻意选的：车宽 0.24m + 两侧各留 0.18m 余量，
+           刚好能过，但代价地图膨胀半径设大了就过不去 —— 这就是这个房间的考点。 -->
+    <model name="partition_short">
+      <static>true</static>
+      <pose>1.2 -0.9 0.25 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry><box><size>0.1 1.8 0.5</size></box></geometry>
+        </collision>
+        <visual name="visual">
+          <geometry><box><size>0.1 1.8 0.5</size></box></geometry>
+          <material><ambient>0.8 0.6 0.3 1</ambient><diffuse>0.9 0.7 0.4 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- ======================================================================
+         ★ 柱子：给 AMCL 提供「可分辨特征」
+            —— 四堵光滑的墙对 2D 激光来说是「四个没有区分度的平面」，
+               粒子滤波会发散。加两个柱子，定位立刻稳。
+            —— 这也是你在真机上会遇到的现实：空旷车库定位容易丢，
+               有柱子/货架的房间就稳。
+         ====================================================================== -->
+    <model name="pillar_a">
+      <static>true</static>
+      <pose>1.8 1.5 0.25 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry><cylinder><radius>0.15</radius><length>0.5</length></cylinder></geometry>
+        </collision>
+        <visual name="visual">
+          <geometry><cylinder><radius>0.15</radius><length>0.5</length></cylinder></geometry>
+          <material><ambient>0.4 0.4 0.8 1</ambient><diffuse>0.5 0.5 0.9 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+    <model name="pillar_b">
+      <static>true</static>
+      <pose>-1.9 -1.6 0.25 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry><cylinder><radius>0.15</radius><length>0.5</length></cylinder></geometry>
+        </collision>
+        <visual name="visual">
+          <geometry><cylinder><radius>0.15</radius><length>0.5</length></cylinder></geometry>
+          <material><ambient>0.4 0.4 0.8 1</ambient><diffuse>0.5 0.5 0.9 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- ======================================================================
+         ★ 一个可移动的箱子：用来测「动态障碍物」
+            —— 建完图之后把它推到路中间，看 Nav2 的局部代价地图
+               能不能及时更新并绕开。这是简历里很值钱的一条演示。
+         ====================================================================== -->
+    <model name="movable_box">
+      <pose>-1.5 1.3 0.15 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry><box><size>0.3 0.3 0.3</size></box></geometry>
+        </collision>
+        <visual name="visual">
+          <geometry><box><size>0.3 0.3 0.3</size></box></geometry>
+          <material><ambient>0.8 0.3 0.3 1</ambient><diffuse>0.9 0.4 0.4 1</diffuse></material>
+        </visual>
+        <inertial>
+          <mass>1.0</mass>
+          <inertia><ixx>0.015</ixx><iyy>0.015</iyy><izz>0.015</izz>
+                   <ixy>0</ixy><ixz>0</ixz><iyz>0</iyz></inertia>
+        </inertial>
+      </link>
+    </model>
+
+  </world>
+</sdf>

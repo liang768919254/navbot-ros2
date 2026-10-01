@@ -1,0 +1,530 @@
+# ============================================================================
+# nav2_params.yaml —— navbot 专用 Nav2 参数
+# ============================================================================
+# ★★ 这份文件是「针对 navbot 这台车」调过的，不是照抄官方默认值。
+#    官方 nav2_bringup/params/nav2_params.yaml 是按 TurtleBot3 Burger 调的，
+#    直接拿来用会有几处必然出问题的地方，下面每一处都标了 ★ 和原因。
+#
+# 官方原件对照：/opt/ros/humble/share/nav2_bringup/params/nav2_params.yaml
+# （装完 nav2_bringup 后可用这条命令自己 diff 一遍，学习效果最好）
+#
+# 改这份文件的铁律：
+#   1. 一次只改一个参数，改完重跑，看效果
+#   2. 任何参数改完要重启 launch（Nav2 参数不是全部支持热更）
+#   3. ★ 所有 *_frame 参数里的坐标系名字，必须和 navbot.xacro 里
+#      真实存在的 link 名一字不差 —— 拼错的表现是 TF 超时，看不出是拼写问题
+# ============================================================================
+
+# ============================================================================
+# AMCL —— 蒙特卡洛定位：在已知地图上用激光匹配，估计车在地图里的位姿
+# ★★ 它是「导航模式」下 map→odom 变换的唯一发布者
+# ============================================================================
+amcl:
+  ros__parameters:
+    use_sim_time: true
+
+    # ---------------------------------------------------------------------
+    # ★★ 下面三个 frame 是本项目最容易错的地方，逐个说清：
+    #
+    #   global_frame_id  = map           地图坐标系，固定不动
+    #   odom_frame_id    = odom          里程计坐标系，会缓慢漂移
+    #   base_frame_id    = base_footprint ★ 注意是 footprint 不是 base_link！
+    #
+    #   为什么用 base_footprint？
+    #     里程计是「在地面上的平面运动」，用「地面投影点」做基准最自然。
+    #     base_link 在底盘几何中心（离地 5cm），用它会让 (x,y,θ) 里
+    #     掺进高度信息，纯属多余。
+    #
+    #   ★ 官方默认值就是 base_footprint，而很多网络教程改成了 base_link
+    #     —— 如果你的模型里两个都有（本项目就是），两个都能跑通，
+    #        但必须和 diff_drive 插件的 robot_base_frame 保持一致！
+    #        两处不一致 ⇒ odom→base 和 map→odom 对不上 ⇒ 定位持续漂移
+    # ---------------------------------------------------------------------
+    base_frame_id: "base_footprint"
+    global_frame_id: "map"
+    odom_frame_id: "odom"
+
+    scan_topic: scan
+
+    # ---------------------------------------------------------------------
+    # 运动模型噪声（alpha1..alpha5）
+    # ★ 这是「差速模型参数」，含义是：轮子转了多少 ≠ 车实际走了多少。
+    #   仿真里可以给小一点；真机上必须调大，否则粒子会过于自信而发散。
+    # ---------------------------------------------------------------------
+    robot_model_type: "nav2_amcl::DifferentialMotionModel"
+    alpha1: 0.2
+    alpha2: 0.2
+    alpha3: 0.2
+    alpha4: 0.2
+    alpha5: 0.2
+
+    # ---------------------------------------------------------------------
+    # 激光似然场模型（likelihood_field）：把地图上的障碍物做距离变换，
+    # 再看激光点落在哪。★ 比 beam 模型鲁棒，对 2D 雷达是首选。
+    # ---------------------------------------------------------------------
+    laser_model_type: "likelihood_field"
+    laser_max_range: 12.0      # ★ 必须 ≤ URDF/Gazebo 里雷达的 <max>（本模型 12.0）
+    laser_min_range: 0.12      # ★ 必须 ≥ 雷达的 <min>（本模型 0.12）
+    max_beams: 60              # 每帧最多用 60 条射线做匹配，够快够准
+    z_hit: 0.5
+    z_rand: 0.5
+    z_max: 0.05
+    z_short: 0.05
+
+    # ---------------------------------------------------------------------
+    # 粒子数：★ 这是「算力 vs 精度」的旋钮
+    #   粒子太少 → 定位抖、容易丢
+    #   粒子太多 → CPU 吃满、定位更新变慢
+    # ★ 本机是核显无 CUDA 的笔记本，2000 是上限，再多会拖慢仿真
+    #   调参判据：ros2 topic echo /amcl_pose 看 covariance，
+    #   抖动大就加粒子，同时把 update_min_d/a 调小
+    # ---------------------------------------------------------------------
+    min_particles: 500
+    max_particles: 2000
+
+    # 位姿估计收敛判据：误差容忍度
+    pf_err: 0.05
+    pf_z: 0.99
+
+    # ---------------------------------------------------------------------
+    # ★ 多久更新一次位姿：这两个是「距离/角度变化阈值」
+    #   update_min_d=0.25 表示「移动超过 25cm 才做一次更新」
+    #   update_min_a=0.2  表示「转动超过 0.2rad(约11°) 才做一次更新」
+    # ★ 调小 → 定位更跟手但更费 CPU；调大 → 省 CPU 但车快了会滞后
+    # ---------------------------------------------------------------------
+    update_min_d: 0.25
+    update_min_a: 0.2
+    resample_interval: 1
+
+    # ★ transform_tolerance 是「TF 时间戳能容忍多旧」
+    #   设太小 → 频繁报 "Timed out waiting for transform"
+    #   设太大 → 车已经在动，代价地图却按旧位姿算
+    #   1.0 秒是仿真下的安全值；真机建议 0.5~1.0
+    transform_tolerance: 1.0
+    tf_broadcast: true         # ★★ 必须是 true，否则 map→odom 就没人发了
+
+    save_pose_rate: 0.5
+    sigma_hit: 0.2
+    lambda_short: 0.1
+    beam_skip_distance: 0.5
+    beam_skip_threshold: 0.3
+    beam_skip_error_threshold: 0.9
+    do_beamskip: false
+    recovery_alpha_slow: 0.0
+    recovery_alpha_fast: 0.0
+    set_initial_pose: false    # 用 RViz 的 "2D Pose Estimate" 手动给初值
+
+# ============================================================================
+# BT Navigator —— 行为树导航器：Nav2 的「总调度」
+# 它不直接算路径，而是按行为树 XML 编排：规划 → 跟随 → 卡住就恢复
+# ============================================================================
+bt_navigator:
+  ros__parameters:
+    use_sim_time: true
+    global_frame: map
+    robot_base_frame: base_footprint   # ★ 和 AMCL 的 base_frame_id 保持一致
+    odom_topic: /odom
+    bt_loop_duration: 10
+    default_server_timeout: 20
+    wait_for_service_timeout: 1000
+
+    # ★ 这一长串插件名不能漏。漏一个的表现是：
+    #   启动时报 "Error loading XML" 或某个 action 找不到对应的 BT 节点，
+    #   而且信息很晦涩。改 Nav2 版本时优先整段照抄官方文件。
+    plugin_lib_names:
+      - nav2_compute_path_to_pose_action_bt_node
+      - nav2_compute_path_through_poses_action_bt_node
+      - nav2_smooth_path_action_bt_node
+      - nav2_follow_path_action_bt_node
+      - nav2_spin_action_bt_node
+      - nav2_wait_action_bt_node
+      - nav2_assisted_teleop_action_bt_node
+      - nav2_back_up_action_bt_node
+      - nav2_drive_on_heading_bt_node
+      - nav2_clear_costmap_service_bt_node
+      - nav2_is_stuck_condition_bt_node
+      - nav2_goal_reached_condition_bt_node
+      - nav2_goal_updated_condition_bt_node
+      - nav2_globally_updated_goal_condition_bt_node
+      - nav2_is_path_valid_condition_bt_node
+      - nav2_initial_pose_received_condition_bt_node
+      - nav2_reinitialize_global_localization_service_bt_node
+      - nav2_rate_controller_bt_node
+      - nav2_distance_controller_bt_node
+      - nav2_speed_controller_bt_node
+      - nav2_truncate_path_action_bt_node
+      - nav2_truncate_path_local_action_bt_node
+      - nav2_goal_updater_node_bt_node
+      - nav2_recovery_node_bt_node
+      - nav2_pipeline_sequence_bt_node
+      - nav2_round_robin_node_bt_node
+      - nav2_transform_available_condition_bt_node
+      - nav2_time_expired_condition_bt_node
+      - nav2_path_expiring_timer_condition
+      - nav2_distance_traveled_condition_bt_node
+      - nav2_single_trigger_bt_node
+      - nav2_goal_updated_controller_bt_node
+      - nav2_is_battery_low_condition_bt_node
+      - nav2_navigate_through_poses_action_bt_node
+      - nav2_navigate_to_pose_action_bt_node
+      - nav2_remove_passed_goals_action_bt_node
+      - nav2_planner_selector_bt_node
+      - nav2_controller_selector_bt_node
+      - nav2_goal_checker_selector_bt_node
+      - nav2_controller_cancel_bt_node
+      - nav2_path_longer_on_approach_bt_node
+      - nav2_wait_cancel_bt_node
+      - nav2_spin_cancel_bt_node
+      - nav2_back_up_cancel_bt_node
+      - nav2_assisted_teleop_cancel_bt_node
+      - nav2_drive_on_heading_cancel_bt_node
+
+bt_navigator_navigate_through_poses_rclcpp_node:
+  ros__parameters:
+    use_sim_time: true
+
+bt_navigator_navigate_to_pose_rclcpp_node:
+  ros__parameters:
+    use_sim_time: true
+
+# ============================================================================
+# Controller Server —— 局部规划（小脑）：把全局路径变成具体的速度指令
+# 这里用的是 DWB（Dynamic Window Based），Nav2 默认且最适合差速车
+# ============================================================================
+controller_server:
+  ros__parameters:
+    use_sim_time: true
+    controller_frequency: 20.0
+
+    # ★★ 这三个「最小速度阈值」是 Nav2 里的经典坑：
+    #    它表示「低于这个速度就当 0 处理」。设得比车的实际最小可控速度大，
+    #    车会「想起来才动一下」，表现为一顿一顿的蠕动。
+    #    官方默认 min_y_velocity_threshold 是 0.5 —— 那是给全向底盘留的，
+    #    差速车 Y 方向永远是 0，所以我们保留 0.5 但要知道它为什么无所谓。
+    min_x_velocity_threshold: 0.001
+    min_y_velocity_threshold: 0.5
+    min_theta_velocity_threshold: 0.001
+
+    failure_tolerance: 0.3
+    progress_checker_plugin: "progress_checker"
+    goal_checker_plugins: ["general_goal_checker"]
+    controller_plugins: ["FollowPath"]
+
+    progress_checker:
+      plugin: "nav2_controller::SimpleProgressChecker"
+      # ★ 10 秒内必须移动 0.5m，否则判定卡住 → 触发恢复行为
+      #   仿真里车慢，这个值要放宽；真机设太紧会频繁误判卡住
+      required_movement_radius: 0.5
+      movement_time_allowance: 10.0
+
+    general_goal_checker:
+      stateful: true
+      plugin: "nav2_controller::SimpleGoalChecker"
+      # ★★ 到点判据。0.25m / 0.25rad 对小车偏松：
+      #    车会在离目标 25cm 的地方就报「到达」，看起来像「没走到位」。
+      #    ★ navbot 车体才 0.3m 长，建议收到 0.1 / 0.15。
+      #    但调太紧会导致车在目标点附近反复微调、磨蹭很久 ——
+      #    这就是「精度 vs 收敛速度」的权衡，要自己试。
+      xy_goal_tolerance: 0.15
+      yaw_goal_tolerance: 0.15
+
+    # ---------------------------------------------------------------------
+    # ★★ DWB 速度约束 —— 必须和 navbot 的真实能力匹配！
+    #    这几项是整个 Nav2 参数里最需要「按自己的车改」的地方。
+    #
+    #    官方值 max_vel_x: 0.26 是按 TurtleBot3 Burger 给的。
+    #    navbot 用的是 TT 马达 + 65mm 轮，实测能到 0.3~0.4 m/s。
+    #    ★ 但仿真里先别贪快：设 0.22 m/s 更容易观察和调试。
+    #
+    #    判据：如果车起步就抽搐/原地打滑，先把 acc_lim_x 降一半。
+    # ---------------------------------------------------------------------
+    FollowPath:
+      plugin: "dwb_core::DWBLocalPlanner"
+      debug_trajectory_details: true
+
+      min_vel_x: 0.0           # 差速车不倒车（想让它倒车就把 recovery 的 backup 用上）
+      min_vel_y: 0.0           # ★ 差速车 Y 方向恒为 0
+      max_vel_x: 0.22
+      max_vel_y: 0.0
+      max_vel_theta: 1.0
+      min_speed_xy: 0.0
+      max_speed_xy: 0.22
+      min_speed_theta: 0.0
+
+      # ★ 加速度上限：这是防止「起步猛冲 / 刹车点头」的关键
+      #   真机上还要受电机电流限制，仿真是理想模型，所以这里要主动设小
+      acc_lim_x: 2.5
+      acc_lim_y: 0.0
+      acc_lim_theta: 3.2
+      decel_lim_x: -2.5
+      decel_lim_y: 0.0
+      decel_lim_theta: -3.2
+
+      # ★ 采样数：DWB 在本地的「搜索密度」
+      #   三者的乘积 = 每周期评估的轨迹条数（20×5×20 = 2000 条）
+      #   ★ 无独显的笔记本上这已经接近上限，再大就掉帧
+      vx_samples: 20
+      vy_samples: 5
+      vtheta_samples: 20
+
+      # ★ 预测时长：1.7s 是官方值。车慢可以短一点(1.0)，车快必须长一点
+      sim_time: 1.7
+      linear_granularity: 0.05
+      angular_granularity: 0.025
+      transform_tolerance: 0.2
+      xy_goal_tolerance: 0.15
+      trans_stopped_velocity: 0.25
+      short_circuit_trajectory_evaluation: true
+      stateful: true
+
+      # ★ critics = 打分器。每条候选轨迹被这些 critic 打分，总分最高者胜出。
+      #   理解它们的顺序 = 理解 DWB 的决策偏好
+      critics: ["RotateToGoal", "Oscillation", "BaseObstacle",
+                "GoalAlign", "PathAlign", "PathDist", "GoalDist"]
+      BaseObstacle.scale: 0.02
+      PathAlign.scale: 32.0
+      PathAlign.forward_point_distance: 0.1
+      GoalAlign.scale: 24.0
+      GoalAlign.forward_point_distance: 0.1
+      PathDist.scale: 32.0
+      GoalDist.scale: 24.0
+      RotateToGoal.scale: 32.0
+      RotateToGoal.slowing_factor: 5.0
+      RotateToGoal.lookahead_time: -1.0
+
+# ============================================================================
+# 局部代价地图 —— 「我脚下这一圈有没有障碍」
+# ★ 坐标系是 odom（随车动，滚动窗口），不是 map
+# ============================================================================
+local_costmap:
+  local_costmap:
+    ros__parameters:
+      update_frequency: 5.0
+      publish_frequency: 2.0
+      global_frame: odom          # ★ 局部图用 odom，窗口跟着车滚动
+      robot_base_frame: base_footprint
+      use_sim_time: true
+      rolling_window: true        # ★ true = 地图跟着车走，不是固定大图
+      width: 3                    # 3m × 3m 的滚动窗口，小车足够
+      height: 3
+      resolution: 0.05            # 5cm 一格。★ 越小越精细但越费算力
+
+      # ★★ robot_radius 是「把车当成圆的」那个半径。
+      #    navbot 车体 0.30 × 0.24，对角线一半 = sqrt(0.15²+0.12²) ≈ 0.192
+      #    取 0.20 留一点余量。
+      #    ★ 设太小的后果：车角会蹭到墙（因为代价地图以为车比实际小）
+      #    ★ 设太大的后果：窄通道过不去（本房间 0.6m 通道会直接封死）
+      #    这就是本项目「窄通道」考点的答案。
+      robot_radius: 0.20
+
+      plugins: ["voxel_layer", "inflation_layer"]
+
+      inflation_layer:
+        plugin: "nav2_costmap_2d::InflationLayer"
+        # ★★ 膨胀层：真实障碍物周围「虚拟加厚」一圈，让规划器主动离开墙
+        #    inflation_radius = 0.25 表示「障碍物 25cm 内开始算代价」
+        #    （★ 注意：这个 25cm 是「总膨胀」，已经包含车半径 0.20m——
+        #       0~20cm 是致命区，20~25cm 是代价衰减区）
+        #    cost_scaling_factor = 越大，代价随距离衰减越快（越"敢贴墙"）
+        #    ★ 这里的 0.25 是配合 0.6m 窄通道算出来的：
+        #        通道半宽 0.3m，2 × inflation_radius = 0.5m < 0.6m，
+        #        中间留 0.1m 零成本走廊，车刚好能过
+        #    ★★ 如果设成 0.35（看似"更安全"），2 × 0.35 = 0.7 > 0.6，
+        #        两侧膨胀区在通道中心重叠，整条通道变成高成本区，
+        #        车会「能规划但过不去」—— 这是本项目最隐蔽的坑之一
+        inflation_radius: 0.25
+        cost_scaling_factor: 5.0
+
+      voxel_layer:
+        plugin: "nav2_costmap_2d::VoxelLayer"
+        enabled: true
+        publish_voxel_map: false
+        origin_z: 0.0
+        z_resolution: 0.05
+        z_voxels: 16
+        max_obstacle_height: 2.0
+        mark_threshold: 0
+        observation_sources: scan
+        scan:
+          topic: /scan
+          max_obstacle_height: 2.0
+          clearing: true       # ★ 允许「擦掉」障碍（回头看这里，动态避障的关键）
+          marking: true        # ★ 允许「标上」障碍
+          data_type: "LaserScan"
+          raytrace_max_range: 3.0   # ★ 射线能清除障碍的最大距离
+          raytrace_min_range: 0.0
+          obstacle_max_range: 2.5   # ★ 超过这个距离的激光点不当作障碍
+          obstacle_min_range: 0.0
+
+      static_layer:
+        plugin: "nav2_costmap_2d::StaticLayer"
+        map_subscribe_transient_local: true
+
+      always_send_full_costmap: true
+
+# ============================================================================
+# 全局代价地图 —— 「整个地图上哪里能走」
+# ★ 坐标系是 map（固定），带 static_layer 读已建好的地图
+# ============================================================================
+global_costmap:
+  global_costmap:
+    ros__parameters:
+      update_frequency: 1.0       # ★ 全局图更新慢没关系，1Hz 足够
+      publish_frequency: 1.0
+      global_frame: map
+      robot_base_frame: base_footprint
+      use_sim_time: true
+      robot_radius: 0.20
+      resolution: 0.05
+      # ★ track_unknown_space: true 表示「地图上未知区域(灰色)不能走」。
+      #   建图没建好的地方会保持未知 ⇒ 规划器不会往那儿规划。
+      #   建图质量差时这里会是「走不出去」的原因。
+      track_unknown_space: true
+
+      plugins: ["static_layer", "obstacle_layer", "inflation_layer"]
+
+      obstacle_layer:
+        plugin: "nav2_costmap_2d::ObstacleLayer"
+        enabled: true
+        observation_sources: scan
+        scan:
+          topic: /scan
+          max_obstacle_height: 2.0
+          clearing: true
+          marking: true
+          data_type: "LaserScan"
+          raytrace_max_range: 3.0
+          raytrace_min_range: 0.0
+          obstacle_max_range: 2.5
+          obstacle_min_range: 0.0
+
+      static_layer:
+        plugin: "nav2_costmap_2d::StaticLayer"
+        map_subscribe_transient_local: true
+
+      inflation_layer:
+        plugin: "nav2_costmap_2d::InflationLayer"
+        inflation_radius: 0.25   # ★ 和 local_costmap 保持一致（见上面对 0.6m 通道的说明）
+        cost_scaling_factor: 5.0
+
+      always_send_full_costmap: true
+
+# ============================================================================
+# Map Server —— 读 .yaml/.pgm 地图并发布到 /map
+# ★★ yaml_filename 留空是故意的：由 nav_bringup.launch.py 的
+#    'map' launch 参数在运行时重写注入。
+#    ★ 如果你在 yaml 里硬写死路径，launch 参数就失效了，
+#      表现是「明明传了新图，加载的还是老的」
+# ============================================================================
+map_server:
+  ros__parameters:
+    use_sim_time: true
+    yaml_filename: ""
+
+map_saver:
+  ros__parameters:
+    use_sim_time: true
+    save_map_timeout: 5.0
+    free_thresh_default: 0.25
+    occupied_thresh_default: 0.65
+    map_subscribe_transient_local: true
+
+# ============================================================================
+# Planner Server —— 全局规划（大脑）：在地图上算一条从 A 到 B 的路径
+# ============================================================================
+planner_server:
+  ros__parameters:
+    expected_planner_frequency: 20.0
+    use_sim_time: true
+    planner_plugins: ["GridBased"]
+    GridBased:
+      plugin: "nav2_navfn_planner/NavfnPlanner"
+      # ★ NavFn 是 Dijkstra / A* 的栅格实现，稳定、够用。
+      #   use_astar: false → 用 Dijkstra。true 用 A*（更快但路径略糙）
+      #   入门建议先用 false，看清楚它给出的路径长什么样，再换 A* 对比
+      tolerance: 0.5
+      use_astar: false
+      allow_unknown: true      # ★ 允许穿过未知区域。想让它「只走看得见的路」就设 false
+
+# ============================================================================
+# Smoother Server —— 路径平滑：把栅格路径的「锯齿」磨顺
+# ============================================================================
+smoother_server:
+  ros__parameters:
+    use_sim_time: true
+    smoother_plugins: ["simple_smoother"]
+    simple_smoother:
+      plugin: "nav2_smoother::SimpleSmoother"
+      tolerance: 1.0e-10
+      max_its: 1000
+      do_refinement: true
+
+# ============================================================================
+# Behavior Server —— 恢复行为：卡住时该干什么（原地转、后退、等待）
+# ============================================================================
+behavior_server:
+  ros__parameters:
+    costmap_topic: local_costmap/costmap_raw
+    footprint_topic: local_costmap/published_footprint
+    cycle_frequency: 10.0
+    behavior_plugins: ["spin", "backup", "drive_on_heading", "wait"]
+    spin:
+      plugin: "nav2_behaviors/Spin"
+    backup:
+      plugin: "nav2_behaviors/BackUp"
+    drive_on_heading:
+      plugin: "nav2_behaviors/DriveOnHeading"
+    wait:
+      plugin: "nav2_behaviors/Wait"
+    global_frame: odom
+    robot_base_frame: base_footprint
+    transform_tolerance: 0.1
+    use_sim_time: true
+    simulate_ahead_time: 2.0
+    max_rotational_vel: 1.0
+    min_rotational_vel: 0.4
+    rotational_acc_lim: 3.2
+
+# ============================================================================
+# Velocity Smoother —— 速度平滑器：在 /cmd_vel 和底盘之间加一层限幅
+# ★★ 这是「保护真机」的一层，非常重要
+#    它保证就算 DWB 抖出一个激进的速度，也不会瞬间全量发给电机
+# ★ 接入真机时，务必让 diff_drive 节点订阅 /cmd_vel_smoothed 而不是 /cmd_vel
+#   否则这一层白加（本项目在仿真里保持官方接法，真机改造写在文档 §8）
+# ============================================================================
+velocity_smoother:
+  ros__parameters:
+    use_sim_time: true
+    smoothing_frequency: 20.0
+    scale_velocities: false
+    feedback: "OPEN_LOOP"      # ★ 没接编码器反馈时用 OPEN_LOOP
+    max_velocity: [0.22, 0.0, 1.0]
+    min_velocity: [-0.22, 0.0, -1.0]
+    max_accel: [2.5, 0.0, 3.2]
+    max_decel: [-2.5, 0.0, -3.2]
+    odom_topic: "odom"
+    odom_duration: 0.1
+    deadband_velocity: [0.0, 0.0, 0.0]
+    velocity_timeout: 1.0
+
+# ============================================================================
+# Waypoint Follower —— 多点巡航：一次给一串点，车依次走过去
+# ★ 这是「简历加分项」：巡逻、巡检类应用就是它
+# ============================================================================
+waypoint_follower:
+  ros__parameters:
+    use_sim_time: true
+    loop_rate: 20
+    stop_on_failure: false
+    waypoint_task_executor_plugin: "wait_at_waypoint"
+    wait_at_waypoint:
+      plugin: "nav2_waypoint_follower::WaitAtWaypoint"
+      enabled: true
+      waypoint_pause_duration: 200
+
+# ============================================================================
+# robot_state_publisher 参数（nav_bringup 里由官方 launch 拉起时共用）
+# ============================================================================
+robot_state_publisher:
+  ros__parameters:
+    use_sim_time: true
