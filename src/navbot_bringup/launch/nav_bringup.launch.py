@@ -89,7 +89,10 @@ def generate_launch_description():
             'use_sim_time': LaunchConfiguration('use_sim_time'),
             'params_file': LaunchConfiguration('params_file'),
             'autostart': LaunchConfiguration('autostart'),
-            'use_composition': 'True',
+            # ★ 改 False：use_composition=True 时 Nav2 节点组合进一个容器，
+            #   lifecycle 状态管理会卡死（planner_server 的 ros2 lifecycle get 超时无响应），
+            #   导致 autostart 失效、手动激活卡住。False = 独立进程，lifecycle 稳定。
+            'use_composition': 'False',
         }.items(),
     )
 
