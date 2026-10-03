@@ -41,37 +41,52 @@
 
 ```
 .
-├── src/
-│   ├── navbot_description/     # 模型
+├── src/                            ROS2 工作空间
+│   ├── navbot_description/         模型
 │   │   ├── urdf/
-│   │   │   ├── navbot.xacro        # 机器人本体（主文件）
-│   │   │   ├── navbot.urdf.xacro   # 引用本体
-│   │   │   └── navbot.gazebo.xacro # Gazebo 插件（雷达、底盘、差速器）
+│   │   │   ├── navbot.xacro           机器人本体（主文件，被下面两个引用）
+│   │   │   ├── navbot.urdf.xacro      引用本体
+│   │   │   └── navbot.gazebo.xacro    Gazebo 插件：雷达、底盘、差速器
 │   │   ├── launch/display_navbot.launch.py
 │   │   └── rviz/navbot_check.rviz
-│   ├── navbot_bringup/         # 启动与配置
+│   ├── navbot_bringup/            启动与配置
 │   │   ├── launch/
-│   │   │   ├── sim_navbot.launch.py     # 只起仿真，不含 Nav2
-│   │   │   ├── slam_mapping.launch.py   # 建图
-│   │   │   └── nav_bringup.launch.py    # 定位 + 导航
+│   │   │   ├── sim_navbot.launch.py     只起仿真，不含 Nav2
+│   │   │   ├── slam_mapping.launch.py   建图
+│   │   │   └── nav_bringup.launch.py    定位 + 导航
 │   │   ├── config/
 │   │   │   ├── nav2_params.yaml
 │   │   │   └── slam_toolbox_params.yaml
-│   │   ├── maps/navbot_room.{pgm,yaml}
-│   │   ├── worlds/navbot_room.world
+│   │   ├── maps/navbot_room.{pgm,yaml}  地图（pgm 由 map_saver 生成）
+│   │   ├── worlds/navbot_room.world     Gazebo 世界
 │   │   └── rviz/navbot_{nav,slam}.rviz
-│   └── navbot_bridge/          # 串口桥接
-├── firmware/
-│   ├── navbot_chassis.c        # STM32 底盘固件
-│   └── navbot_protocol.md      # 通信协议 v1（改代码前先看这份）
-├── 无硬件自测/
-│   ├── fake_chassis.py         # 假底盘，可注入故障
+│   └── navbot_bridge/             串口桥接（待实现，仅有包骨架）
+├── firmware/                      真机
+│   ├── navbot_chassis.c           STM32 底盘固件
+│   └── navbot_protocol.md         通信协议 v1（改代码前先看这份）
+├── 无硬件自测/                     不接硬件也能验串口链路
+│   ├── fake_chassis.py            假底盘，可注入四类故障
 │   ├── test_protocol.py
-│   └── verify_e2e.sh
+│   └── verify_e2e.sh              端到端验证
 ├── docs/
-├── setup_env.sh
-└── check_env.sh
+│   ├── navigation_demo.gif        README 里的演示动图
+│   ├── 00_环境一键安装文档.md
+│   ├── A3_URDF建模概念清单.md
+│   ├── A3_URDF建模模板.md
+│   ├── A4_三包架构说明.md
+│   ├── A5_知识概念全解.md
+│   ├── G1_Git推送到GitHub详细步骤.md
+│   └── P3_ROS2自主导航移动机器人_保姆级项目文档.md
+├── setup_env.sh                   环境一键重建
+├── check_env.sh                   环境体检
+├── check_sim.sh                   仿真层四道门体检
+├── record_navigation.sh           无头环境录导航 GIF
+├── diag_ros_apt_key.sh            apt 源与密钥专项诊断
+├── audit_scripts.sh               脚本自审
+└── README.md
 ```
+
+脚本的用途见[脚本](#脚本)一节。
 
 ## 环境准备
 
