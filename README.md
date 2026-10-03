@@ -2,7 +2,9 @@
 
 基于 ROS2 Humble + Nav2 + slam_toolbox 的两轮差速小车导航项目。仿真跑 Gazebo Classic 11，真机接 STM32 底盘，URDF 模型两边复用。
 
+
 ![Nav2 自主导航演示](docs/navigation_demo.gif)
+
 
 > 车在 `navbot_room` 房间里沿方形路线走一圈，回到起点成环。
 > 录制命令：`bash record_navigation.sh square`（无头环境，脚本用 Xvfb 起虚拟屏跑 RViz）。
