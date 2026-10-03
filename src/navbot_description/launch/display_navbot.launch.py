@@ -1,30 +1,21 @@
 #!/usr/bin/env python3
-"""
-display_navbot.launch.py —— 只把模型丢进 RViz 看，不启动仿真、不启动导航。
+"""只把模型丢进 RViz 看，不起仿真也不起导航。
 
-用途：把 URDF 这一步单独隔离出来验。
-★ 这个 launch 属于「阶段 A」，作用是让你在碰 Gazebo / Nav2 之前，
-  先用最快的方式确认「坐标系树画对了」。
+把 URDF 这一步单独隔离出来验：碰 Gazebo 和 Nav2 之前，先用最快的方式
+确认坐标系树画对了。
 
-启动三样：
-  ① robot_state_publisher   读模型 → 发 /tf + /tf_static
-  ② joint_state_publisher   发全零关节角，让 TF 树不断链
-  ③ rviz2                   显示 RobotModel + TF + LaserScan
-
-------------------------------------------------------------------------------
-用法：
+启动 robot_state_publisher（读模型发 /tf）+ joint_state_publisher（发全零
+关节角，让 TF 树不断链）+ rviz2。
 
   ros2 launch navbot_description display_navbot.launch.py
-
-  # 不启动 RViz（只想在终端里看 TF）
+  # 不起 RViz，只在终端看 TF
   ros2 launch navbot_description display_navbot.launch.py use_rviz:=false
 
-------------------------------------------------------------------------------
-RViz 里要看到东西，手动确认这 4 项（配置里已经设好，但你该知道为什么）：
+RViz 里该看到（配置已设好，但值得知道为什么）：
   · Global Options → Fixed Frame = base_footprint
   · RobotModel → Description Topic = /robot_description
-  · TF → 能看到 base_footprint→base_link→laser_link 这条链
-  · LaserScan → Topic = /scan（本 launch 没有雷达数据，所以这项是空的）
+  · TF → base_footprint → base_link → laser_link 这条链
+  · LaserScan → 本 launch 没有雷达数据，这项是空的
 """
 
 import os

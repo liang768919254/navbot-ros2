@@ -1,127 +1,248 @@
-# navbot —— 两轮差速小车 ROS2 自主导航
+# navbot
 
-基于 **ROS2 Humble + Nav2 + slam_toolbox** 的两轮差速小车自主导航项目。
-仿真走 **Gazebo Classic 11**，真机走 **STM32 底盘 + 串口桥接**，同一套模型仿真真机复用。
+基于 ROS2 Humble + Nav2 + slam_toolbox 的两轮差速小车导航项目。仿真跑 Gazebo Classic 11，真机接 STM32 底盘，URDF 模型两边复用。
 
-> 📹 动图占位：录一段「slam_toolbox 建图 + Nav2 自主导航」的 10 秒 GIF 放这里。
+## 目录
 
----
+- [系统组成](#系统组成)
+- [目录结构](#目录结构)
+- [环境准备](#环境准备)
+- [仿真流程](#仿真流程)
+- [脚本](#脚本)
+- [配置说明](#配置说明)
+- [真机路线](#真机路线)
+- [已知问题](#已知问题)
+- [相关文档](#相关文档)
 
-## 系统架构
+## 系统组成
 
-```mermaid
-graph TD
-    A["Nav2 · slam_toolbox<br/>外部导航/建图算法"] -->|"话题 /cmd_vel /odom /scan /map"| B["navbot_bringup<br/>启动配置层"]
-    B -->|"引用 xacro 模型"| C["navbot_description<br/>模型描述层"]
-    C -.->|"真机: 桥接替代 Gazebo 仿真"| D["navbot_bridge<br/>桥接层"]
-    D -->|"串口协议（11 字段帧）"| E["STM32 底盘<br/>硬件 · 非 ROS"]
-```
+三个包，依赖单向，没有循环：
 
-三个包职责单一、依赖单向：
+| 包 | 职责 |
+|---|---|
+| `navbot_description` | URDF/xacro 模型，关节树、惯量、雷达支架 |
+| `navbot_bringup` | launch 文件、Nav2 与 slam_toolbox 参数、Gazebo 世界、地图 |
+| `navbot_bridge` | 串口 ↔ ROS 话题桥接（真机，暂未实现） |
 
-| 包 | 层 | 职责 |
-|---|---|---|
-| `navbot_description` | 模型描述层 | 车长什么样（URDF/xacro） |
-| `navbot_bringup` | 启动配置层 | 怎么把车跑起来（launch + config） |
-| `navbot_bridge` | 桥接层（真机） | 串口 ↔ ROS 话题 |
+导航部分直接用 Nav2 官方 `bringup_launch.py`，自己只提供参数文件和地图。
 
-完整架构说明见 [`docs/A4_三包架构说明.md`](docs/A4_三包架构说明.md)。
+底盘参数在三个地方必须保持一致，改一个要同步另两个：
 
----
+- 轮距 0.16 m、轮半径 0.0325 m —— `navbot.xacro`
+- `robot_radius: 0.20` —— `nav2_params.yaml` 代价地图
+- `--wheel-sep` / `--wheel-radius` —— `fake_chassis.py`
 
-## 项目结构
+## 目录结构
 
 ```
 .
-├── src/                       # ROS2 工作空间源码
-│   ├── navbot_description/    #   模型描述层（阶段 A）
-│   ├── navbot_bringup/        #   启动配置层（阶段 B/C/D）
-│   └── navbot_bridge/         #   桥接层（真机，阶段 D）
-├── docs/                      # 文档
-│   ├── 00_环境一键安装文档.md
-│   ├── P3_...保姆级项目文档.md
-│   ├── A3_URDF建模概念清单.md
-│   ├── A3_URDF建模模板.md
-│   └── A4_三包架构说明.md
-├── 无硬件自测/                # 端到端验证脚本（假底盘 ↔ 串口 ↔ ROS）
-├── firmware/                  # STM32 底盘固件（真机）
-├── setup_env.sh               # 环境一键重建脚本
-├── README.md
-└── .gitignore
+├── src/
+│   ├── navbot_description/     # 模型
+│   │   ├── urdf/
+│   │   │   ├── navbot.xacro        # 机器人本体（主文件）
+│   │   │   ├── navbot.urdf.xacro   # 引用本体
+│   │   │   └── navbot.gazebo.xacro # Gazebo 插件（雷达、底盘、差速器）
+│   │   ├── launch/display_navbot.launch.py
+│   │   └── rviz/navbot_check.rviz
+│   ├── navbot_bringup/         # 启动与配置
+│   │   ├── launch/
+│   │   │   ├── sim_navbot.launch.py     # 只起仿真，不含 Nav2
+│   │   │   ├── slam_mapping.launch.py   # 建图
+│   │   │   └── nav_bringup.launch.py    # 定位 + 导航
+│   │   ├── config/
+│   │   │   ├── nav2_params.yaml
+│   │   │   └── slam_toolbox_params.yaml
+│   │   ├── maps/navbot_room.{pgm,yaml}
+│   │   ├── worlds/navbot_room.world
+│   │   └── rviz/navbot_{nav,slam}.rviz
+│   └── navbot_bridge/          # 串口桥接
+├── firmware/
+│   ├── navbot_chassis.c        # STM32 底盘固件
+│   └── navbot_protocol.md      # 通信协议 v1（改代码前先看这份）
+├── 无硬件自测/
+│   ├── fake_chassis.py         # 假底盘，可注入故障
+│   ├── test_protocol.py
+│   └── verify_e2e.sh
+├── docs/
+├── setup_env.sh
+└── check_env.sh
 ```
 
----
+## 环境准备
 
-## 快速启动（仿真全流程）
+Ubuntu 22.04 + ROS2 Humble。一条命令重建环境层（装包、配国内源、编译工作空间），15~25 分钟，幂等可重复跑：
 
 ```bash
-# ① 环境重建（新机器 / 实例重置后，约 15~25 分钟，幂等可重复跑）
+cd /mnt/workspace
 bash setup_env.sh
+```
 
-# ② 起仿真（无头环境加 gui:=false）
-source /opt/ros/humble/setup.bash && source install/setup.bash
+装完先体检一次：
+
+```bash
+bash check_env.sh
+```
+
+实例重置后环境层会丢，`/mnt/workspace` 是持久 NAS 所以源码不受影响，重跑 `setup_env.sh` 即可。
+
+装出来的包数应该是 211（按需安装，不是 desktop 全套，不必追求 300+）。
+
+## 仿真流程
+
+四个阶段各对应一个 launch，前进顺序是固定的。
+
+### ① 看模型
+
+```bash
+source ~/.ros_env
+ros2 launch navbot_description display_navbot.launch.py
+```
+
+### ② 让车动起来
+
+```bash
 ros2 launch navbot_bringup sim_navbot.launch.py gui:=false
+```
 
-# ③ 建图（终端 2）
+无头环境加 `gui:=false`。另开终端遥控：
+
+```bash
+ros2 run teleop_twist_keyboard teleop_twist_keyboard
+ros2 topic hz /scan    # 约 10 Hz
+ros2 topic hz /odom    # 约 50 Hz
+```
+
+`/odom` 的 `frame_id` 应该是 `odom`，`child_frame_id` 是 `base_footprint`。
+
+### ③ 建图
+
+```bash
 ros2 launch navbot_bringup slam_mapping.launch.py use_sim_time:=true
+```
 
-# ④ 遥控走一圈后存图（终端 3）
+遥控车走一圈覆盖房间，确认 `/map` 有数据后存图：
+
+```bash
+ros2 topic hz /map      # 约 0.2 Hz，确认有帧再存
 ros2 run nav2_map_server map_saver_cli -f navbot_room
+```
 
-# ⑤ 导航（关掉建图，加载地图 + AMCL + Nav2）
+存出来的 `.pgm` 和 `.yaml` 放进 `src/navbot_bringup/maps/`。
+
+### ④ 导航
+
+```bash
 ros2 launch navbot_bringup nav_bringup.launch.py use_sim_time:=true
 ```
 
-四个 launch 对应四个阶段的主线：
+RViz 里先点 **2D Pose Estimate** 给初始位姿，再点 **Nav2 Goal** 发目标点。不依赖 RViz 的话：
 
+```bash
+ros2 action send_goal /navigate_to_pose nav2_msgs/action/NavigateToPose \
+  "{pose: {header: {frame_id: map}, pose: {position: {x: 1.5, y: 1.0, z: 0.0}, orientation: {w: 1.0}}}}"
 ```
-display_navbot（看模型）→ sim_navbot（动起来）→ slam_mapping（建图）→ nav_bringup（导航）
-    阶段 A                  阶段 B                阶段 C               阶段 D
+
+导航模式和建图模式互斥，两者同时跑会争抢 `map → odom`，表现为 TF 抖动、位置乱跳。
+
+### 无头环境录 GIF
+
+需要图形界面但没有显示器时，用虚拟屏跑 RViz 再截图合成：
+
+```bash
+bash record_navigation.sh square    # 走方形路线成环，输出 navigation.gif
 ```
 
----
+Gazebo 跟不上真实时间（RTF < 1），车按仿真时间走而截图按真实时间拍，整段导航在墙上要花几分钟。脚本用「跑完为止」模式而非固定帧数。
 
-## 环境配置
+## 脚本
 
-环境依赖与踩坑全部沉淀在 [`setup_env.sh`](setup_env.sh)，一键重建。内置以下实战修复：
+| 脚本 | 用途 |
+|---|---|
+| `setup_env.sh` | 环境一键重建（装包、配源、编译） |
+| `check_env.sh` | 3 秒体检，输出缺什么和对应命令；`--fix` 自动补 |
+| `check_sim.sh` | 仿真层四道门体检（spawn / 话题 / TF）；`--diag` 只读快照 |
+| `record_navigation.sh` | 无头环境录导航 GIF；`--diag` 现场诊断 |
+| `diag_ros_apt_key.sh` | apt 源与 GPG 密钥专项诊断 |
+| `audit_scripts.sh` | 脚本自审，抓 `bash -n` 查不到的错 |
+| `无硬件自测/verify_e2e.sh` | 串口协议端到端验证（假底盘） |
 
-1. rosdep 双源国内镜像（index 走中科大、yaml 清单走清华）
-2. python3 强制系统 3.10（容器默认 3.11 与 ROS Humble 冲突）
-3. 激光 `gpu_ray → ray`（无头环境 GPU 渲染被禁）
-4. 环境变量注入 `~/.bashrc` 顶部（绕开非交互提前 return）
+改完 shell 脚本建议跑一次 `audit_scripts.sh`。它检查两类 `bash -n` 查不出的问题：命令名与引号之间缺空格（语法合法、运行时才炸），以及管道退出码被 `tee`/`sed` 吞掉导致错误分支永不触发。
 
-详细说明见 [`docs/00_环境一键安装文档.md`](docs/00_环境一键安装文档.md)。
+## 配置说明
 
----
+### launch 参数
 
-## 硬件 BOM（真机）
+| launch | 参数 | 默认 | 说明 |
+|---|---|---|---|
+| `sim_navbot` | `gui` | `true` | 无头环境设 `false` |
+| | `use_sim_time` | `true` | 仿真必须 true |
+| | `world` | `navbot_room.world` | Gazebo 世界 |
+| `slam_mapping` | `use_sim_time` | `true` | |
+| | `use_rviz` | `true` | |
+| | `slam_params_file` | `slam_toolbox_params.yaml` | |
+| `nav_bringup` | `map` | `maps/navbot_room.yaml` | |
+| | `params_file` | `config/nav2_params.yaml` | |
+| | `use_sim_time` | `true` | 真机改 `false` |
+| | `use_rviz` | `true` | |
+| | `autostart` | `true` | 生命周期节点自动激活；调试时可设 `false` 手动逐个激活 |
+| `display_navbot` | `use_sim_time` | `true` | |
+| | `use_rviz` | `true` | |
 
-| 部件 | 型号 | 说明 |
+### 关键配置项
+
+`config/nav2_params.yaml`：
+
+| 项 | 值 | 说明 |
 |---|---|---|
-| 主控 | STM32（待定型号） | 底盘控制，见 `firmware/` |
-| 电机 ×2 | 带编码器减速电机 | PPR 2112 |
-| 激光雷达 | RPLIDAR A1 | 单线 360°，驱动 `rplidar-ros` |
-| 轮距 / 轮径 | 0.16 m / 0.0325 m | 与 `navbot.xacro` 和 `nav2_params.yaml` 三处一致 |
+| `robot_radius` | 0.20 | 代价地图机器人半径，要大于车体半对角 |
+| `max_vel_x` | 0.22 | 差速车不倒车，`min_vel_x` 为 0 |
+| `max_vel_theta` | 1.0 | 原地旋转角速度 |
+| `xy_goal_tolerance` | 0.15 | 位置容差 |
+| `scan_topic` | `scan` | 无 `/scan` 前缀，适配 Gazebo 的相对话题名 |
 
-> 待补：接线图、引脚对应表。
+`config/slam_toolbox_params.yaml`：
 
----
+| 项 | 值 | 说明 |
+|---|---|---|
+| `resolution` | 0.05 | 必须与地图 yaml 的 `resolution` 一致，否则地图被缩放、路径撞墙 |
+| `odom_frame` / `base_frame` | `odom` / `base_footprint` | |
+| `enable_interactive_mode` | `true` | 允许在 RViz 里手动拉回环 |
 
-## 踩坑记录（挑 3 个）
+`maps/navbot_room.yaml` 的 `origin` 由 map_saver 自动填写，不要手改；`negate` 必须为 0，搞反了 Nav2 会把空地当障碍。
 
-1. **`map → odom` 谁发布？** 建图时 slam_toolbox 发、导航时 AMCL 发，两个同时开会 TF 抖动。→ 建图和导航分两个 launch，二选一。
-2. **`joint_state_publisher` 一直等 robot_description** —— 它是 Python 包，不能 `find_package`，且 launch 里要显式传 `robot_description` 参数。
-3. **无头容器 `/scan` 空** —— `gpu_ray` 依赖 GPU 渲染，无头被禁，改用 CPU 的 `ray`。
+## 真机路线
 
-更多见保姆级文档 §六 陷阱章节。
+`navbot_bridge` 目前是空壳，串口桥接待实现。已经定好的部分：
 
----
+- 通信协议 v1 —— [`firmware/navbot_protocol.md`](firmware/navbot_protocol.md)，ASCII 明文，上行 50 Hz 11 字段，下行 20 Hz 4 字段
+- 底盘固件 —— [`firmware/navbot_chassis.c`](firmware/navbot_chassis.c)
+- 无硬件验证 —— `fake_chassis.py` 冒充 STM32，可以注入死机、乱码、seq 停滞、零点漂移四类故障
 
-## 文档索引
+改协议前先看那份文档，两端字段必须同步。
+
+## 已知问题
+
+**Gazebo 版本**：Humble 对应 Gazebo Classic 11，包名 `gazebo`。不要装 `ros-humble-ros-gz`（那是新版的桥接包），URDF 里的 `<gazebo>` 标签会找不到插件。
+
+**无头环境 `/scan` 空**：`gpu_ray` 依赖 GPU 渲染，无头环境被禁。`setup_env.sh` 会自动把 xacro 里的 `gpu_ray` 改成 `ray`。
+
+**`joint_state_publisher` 挂起**：它是 ament_python 包，没有 Config.cmake，不能在 CMakeLists 里 `find_package`。launch 里要显式传 `robot_description` 参数。
+
+**`tf2_echo` 属于 `tf2_ros`**：`ros2 run tf2_tools tf2_echo` 会报 No executable found，`tf2_tools` 里只有 `view_frames`。
+
+**`ament_lint_auto` 缺包**：`ros2 pkg create` 生成的 CMakeLists 默认 `find_package(ament_lint_auto REQUIRED)`，而 colcon build 默认 `BUILD_TESTING=ON`，不装它编译必挂。
+
+**`joint_state_publisher` 依赖降级**：它是运行时依赖，留在 `package.xml` 的 `<exec_depend>`，不要放进 `<depend>`。
+
+## 相关文档
 
 | 文档 | 内容 |
 |---|---|
-| [P3 保姆级项目文档](docs/P3_ROS2自主导航移动机器人_保姆级项目文档.md) | 主线教程，阶段 A→D 全流程 |
-| [00 环境一键安装](docs/00_环境一键安装文档.md) | 环境配置 + 踩坑 |
-| [A4 三包架构说明](docs/A4_三包架构说明.md) | 系统架构 + 面试口述 |
-| [A3 URDF 建模](docs/A3_URDF建模概念清单.md) | 建模概念与模板 |
+| [P3 保姆级项目文档](docs/P3_ROS2自主导航移动机器人_保姆级项目文档.md) | 主线教程，阶段 A→D |
+| [A4 三包架构说明](docs/A4_三包架构说明.md) | 架构拆解 |
+| [A3 URDF 建模概念清单](docs/A3_URDF建模概念清单.md) | 建模概念与惯量宏 |
+| [00 环境一键安装](docs/00_环境一键安装文档.md) | 环境配置与踩坑 |
+| [A5 知识概念全解](docs/A5_知识概念全解.md) | 概念答疑 |
+| [G1 Git 推送步骤](docs/G1_Git推送到GitHub详细步骤.md) | 推到 GitHub |
+
+环境层的问题基本都沉淀在 `setup_env.sh` 文件头和 `docs/00_环境一键安装文档.md` 的「常见坑」章节。

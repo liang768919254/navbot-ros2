@@ -5,12 +5,11 @@
     <joint name="base_joint" type="fixed">
         <parent link="base_footprint"/>
         <child link="base_link"/>
-        <!-- 位姿:child 相对于 parent,子坐标在父坐标系里,位置在哪,转没转--> 
-        <!-- 中心高度: 底面离地 + 半厚度  -->
+        <!-- base_footprint 贴地，base_link 再抬半个车厚 -->
         <origin xyz="0.0 0.0 0.05" rpy="0 0 0"/>
     </joint>
 
-    <!-- box_inertia（长方体，三个轴各不同）宏 -->
+    <!-- 长方体惯量 -->
     <xacro:macro name="box_inertia" params="m x y z">
         <inertial>            
         <origin xyz="0.0 0.0 0.0" rpy="0.0 0.0 0.0"/>
@@ -23,18 +22,16 @@
 
 
     <link name="base_link" > 
-        <!-- 视觉: 底盘几何长度 -->
-        <visual>
+            <visual>
             <geometry><box size="0.30 0.24 0.06"/></geometry>
         </visual>
-        <!-- 碰撞:  -->
         <collision>
             <geometry><box size="0.30 0.24 0.06"/></geometry>
         </collision>
         <xacro:box_inertia m="1.2" x="0.30" y="0.24" z="0.06"/>  
     </link>
 
-    <!-- cyl_inertia（圆柱，轴沿 Z）宏 -->
+    <!-- 圆柱惯量，轴沿 Z -->
     <xacro:macro name="cyl_inertia" params="m r h">
         <inertial>            
         <origin xyz="0.0 0.0 0.0" rpy="0.0 0.0 0.0"/>
@@ -46,7 +43,6 @@
     </xacro:macro>
 
 
-    <!-- 左右轮：用宏 -->
     <xacro:macro name="wheel" params="prefix side" >
         <link name="${prefix}_wheel_link">
                 <visual>
@@ -76,7 +72,7 @@
     <xacro:wheel prefix="left" side="1"/>
     <xacro:wheel prefix="right" side="-1"/>
 
-    <!-- sphere_inertia（球）​ 宏 -->
+    <!-- 球惯量 -->
     <xacro:macro name="sphere_inertia" params="m r">
         <inertial>            
         <origin xyz="0.0 0.0 0.0" rpy="0.0 0.0 0.0"/>
@@ -87,7 +83,7 @@
         </inertial>    
     </xacro:macro>
 
-    <!-- 前后万向球：用宏 -->
+    <!-- 前后万向球 -->
     <xacro:macro name="caster" params="prefix x_pos">
         <link name="${prefix}_caster_link">
                 <visual>
@@ -115,16 +111,14 @@
     <xacro:caster prefix="front" x_pos="0.115"/>
     <xacro:caster prefix="back"  x_pos="-0.115"/>   
 
-    <!-- ★ 命名约定：必须叫 laser_link（不是 lidar_link）
-         navbot.gazebo.xacro 里激光传感器插件用 reference="laser_link" 挂接，
-         文档验收 A-2 也要求 TF 树里有 laser_link 这条链 -->
+    <!-- 必须叫 laser_link（不是 lidar_link）：gazebo.xacro 里的雷达插件
+         用 reference="laser_link" 挂接，改名会导致 TF 树断链 -->
     <link name="laser_link">
-        <!-- 视觉: 激光雷达几何长度 -->
+
         <visual>
             <origin xyz="0.0 0.0 0.0"/>    
             <geometry><cylinder radius="0.035" length="0.04"/></geometry>
         </visual>
-        <!-- 碰撞:  -->
         <collision>
             <origin xyz="0.0 0.0 0.0"/>       
             <geometry><cylinder radius="0.035" length="0.04"/></geometry>

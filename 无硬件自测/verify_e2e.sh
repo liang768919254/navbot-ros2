@@ -12,7 +12,7 @@
 #                                                              /odom + /tf (odom→base_footprint)
 #                                                              /joint_states
 #
-# ★★ 为什么这一步必须先做，不能直接上硬件？
+# 为什么这一步必须先做，不能直接上硬件？
 #    因为「PC 侧对接问题」（解析、单位、TF frame_id、时间戳）和硬件毫无关系。
 #    先在虚拟串口上跑通，你就把问题空间砍掉了一半。
 #    上硬件后如果出问题，基本只剩「电气 + 固件」两个方向，排查快得多。
@@ -20,20 +20,20 @@
 # 前置：socat（apt install socat）
 # 用法：./verify_e2e.sh
 #
-# ★ 注意：chassis_bridge 是你自己要在阶段 D 写的节点。
+# 注意：chassis_bridge 是你自己要在阶段 D 写的节点。
 #   这个脚本在你写完之前会停在「找不到节点」那一步 ——
-#   ★ 这是故意的：它同时充当「你写完了没有」的判据。
+#   这是故意的：它同时充当「你写完了没有」的判据。
 # ============================================================================
 
 set -u
 
-# ★★ 一个必踩的坑：/opt/ros/humble/setup.bash 内部引用了未定义变量
+# 一个必踩的坑：/opt/ros/humble/setup.bash 内部引用了未定义变量
 #    （AMENT_TRACE_SETUP_FILES 等），在 set -u 下 source 它会直接报
 #      /opt/ros/humble/setup.bash: 行 8: AMENT_TRACE_SETUP_FILES: 未绑定的变量
 #    并中止脚本。
 #    → 两个解法，本脚本用后者（侵入性最小）：
 #      (a) 整个脚本不用 set -u
-#      (b) ★ source 期间临时关掉 -u，source 完再打开
+#      (b) source 期间临时关掉 -u，source 完再打开
 #    这也解释了为什么很多人「单独 source 没问题、写进脚本就挂」。
 set +u
 source /opt/ros/humble/setup.bash
@@ -60,7 +60,7 @@ cleanup() {
   [ -n "${FAKE_PID:-}" ] && kill "${FAKE_PID}" 2>/dev/null
   [ -n "${BRIDGE_PID:-}" ] && kill "${BRIDGE_PID}" 2>/dev/null
   [ -n "${SOCAT_PID:-}" ] && kill "${SOCAT_PID}" 2>/dev/null
-  # ★ 不用 rm -rf；本机 safe-delete 会拦，且可能因 .Trash 权限失败
+  # 不用 rm -rf；本机 safe-delete 会拦，且可能因 .Trash 权限失败
   wait 2>/dev/null
   echo "  日志留在 ${LOG_DIR}/"
 }
@@ -117,14 +117,14 @@ fi
 # ============================================================================
 hdr "2. 建立虚拟串口对"
 # ============================================================================
-# ★★ 先探测 pty 能力。
+# 先探测 pty 能力。
 #    socat 的 pty 模式依赖 /dev/ptmx 和 /dev/pts。
 #    在某些受限环境（容器 / 安全沙箱 / 某些 WSL 配置）里这两个不存在，
 #    socat 会报：
 #      E openpty(...): No such file or directory
 #      N exit(1)
 #    然后符号链接根本不会出现 —— 而你可能在反复怀疑自己的 socat 命令。
-#    ★ 先探测、再决定路径，比事后猜要省时间。
+#    先探测、再决定路径，比事后猜要省时间。
 PTY_OK=0
 if [ -e /dev/ptmx ] && [ -d /dev/pts ]; then
   PTY_OK=1
@@ -187,7 +187,7 @@ if [ "${USE_TCP}" -eq 0 ]; then
 
   # -------------------------------------------------------------------------
   # 直接从 ttyV1 读几帧，验证「物理层」通了
-  # ★ 这一步绕开 ROS2，只用 python 读串口 —— 故障分段定位的关键：
+  # 这一步绕开 ROS2，只用 python 读串口 —— 故障分段定位的关键：
   #   如果这里不通，问题在串口/脚本；通了再往下查 ROS 层。
   # -------------------------------------------------------------------------
   echo "  从 ttyV1 直接收 5 帧原始数据（不经过 ROS）..."
@@ -234,7 +234,7 @@ else
   skip "串口物理层检查（本环境无 pty 设备）"
 
   # 用 TCP 把「假数据源 → 解析器」这条链路的逻辑跑一遍。
-  # ★ 这不是替代品，只是「在没有 pty 的地方也能验证纯逻辑」的补丁。
+  # 这不是替代品，只是「在没有 pty 的地方也能验证纯逻辑」的补丁。
   TCP_OUT=$(timeout 25 /usr/bin/python3 - <<'PYEOF'
 import socket, sys, threading, time, math, random
 
@@ -375,7 +375,7 @@ fi
 # ============================================================================
 hdr "4. 检查 chassis_bridge 是否已写好"
 # ============================================================================
-# ★★ 这一步是本脚本「兼当进度判据」的地方。
+# 这一步是本脚本「兼当进度判据」的地方。
 #    chassis_bridge 是你要自己写的节点（见教程 §3.5）。
 #    没写之前，后面几步会跳过 —— 这不是失败，是提示你该动手了。
 BRIDGE_FOUND=0
@@ -414,7 +414,7 @@ if [ "${BRIDGE_FOUND}" -eq 1 ]; then
       ODOM_HZ=$(timeout 8 ros2 topic hz /odom 2>/dev/null \
                 | grep -oP 'average rate: \K[0-9.]+' | head -1 || echo "")
       if [ -n "${ODOM_HZ}" ]; then
-        # ★ 判据：假底盘发 50Hz，桥的发布定时器也应是 50Hz
+        # 判据：假底盘发 50Hz，桥的发布定时器也应是 50Hz
         #   实测允许 40~60 —— 虚拟机/沙箱环境计时精度有限
         if awk -v hz="${ODOM_HZ}" 'BEGIN{exit !(hz>=40 && hz<=60)}'; then
           ok "/odom 频率 ${ODOM_HZ} Hz（期望 40~60）"
@@ -442,7 +442,7 @@ if [ "${BRIDGE_FOUND}" -eq 1 ]; then
       ng "/odom child_frame_id 不是 base_footprint"
     fi
 
-    # ---- 5.3 ★★ TF 链完整性：本项目的核心验收项 ----
+    # ---- 5.3 TF 链完整性：本项目的核心验收项 ----
     # odom → base_footprint 必须存在，否则 Nav2 一定起不来。
     if timeout 8 ros2 run tf2_ros tf2_echo odom base_footprint 2>/dev/null \
          | grep -q "Translation"; then
@@ -498,7 +498,7 @@ if [ "${BRIDGE_FOUND}" -eq 1 ] && [ -n "${BRIDGE_PID:-}" ] \
     ng "乱码注入后 /odom 消失"
   fi
 
-  # ★ 日志里不该出现满屏的坏帧警告
+  # 日志里不该出现满屏的坏帧警告
   BADLOG_LINES=$(wc -l < "${LOG_DIR}/bridge.log" 2>/dev/null || echo 0)
   if [ "${BADLOG_LINES}" -lt 500 ]; then
     ok "桥日志没有刷屏（共 ${BADLOG_LINES} 行）"

@@ -1,35 +1,15 @@
-#!/usr/bin/env python3
-"""
-sim_navbot.launch.py —— 阶段 B：把 navbot 丢进 Gazebo，能用手柄/键盘开起来。
+"""只起仿真，不含 Nav2。
 
-这一层刻意「不含 Nav2」。
-★ 为什么：把「仿真底盘能不能动」和「Nav2 能不能规划」分成两件事验。
-  一起起，出错时你分不清是底盘没通还是导航没配。
+把「底盘能不能动」和「Nav2 能不能规划」分开验，一起起的话出错时
+分不清是底盘没通还是导航没配。
 
-启动五样：
-  ① gzserver + gzclient   Gazebo Classic 11（本机实况，非 Fortress）
-  ② robot_state_publisher 模型 → /tf
-  ③ spawn_entity         把模型生成到 Gazebo 世界里
-  ④ 世界文件             一个空房间 + 几个障碍物
-  （/cmd_vel 由你手动发：teleop_twist_keyboard）
-
-------------------------------------------------------------------------------
-用法：
-
-  # 1) 起仿真
   ros2 launch navbot_bringup sim_navbot.launch.py
-
-  # 2) 另开一个终端，键盘遥控（第一次开不起来车就看这一步）
   ros2 run teleop_twist_keyboard teleop_twist_keyboard
+  ros2 topic hz /scan    # 约 10 Hz
+  ros2 topic hz /odom    # 约 50 Hz
 
-  # 3) 验数据流通
-  ros2 topic hz /scan          # 应约 10 Hz
-  ros2 topic hz /odom          # 应约 50 Hz（插件 update_rate）
-  ros2 topic echo /odom --once # 看 pose 里 frame_id 是不是 odom、child 是不是 base_footprint
-  ros2 run tf2_tools view_frames   # 应看到 map?--odom--base_footprint--laser_link
-
-★ 注意：本机装的是 Gazebo Classic 11.10.2（`gazebo` 命令），
-  不是新版 `gz sim`。两者的 launch 写法完全不同，本文件是 Classic 版。
+Gazebo 是 Classic 11（gazebo 命令），不是新版 gz sim，
+两者 launch 写法完全不同，这个文件是 Classic 版。
 """
 
 import os
@@ -65,13 +45,13 @@ def generate_launch_description():
     )
     use_sim_time_arg = DeclareLaunchArgument(
         'use_sim_time', default_value='true',
-        description='★ 仿真里必须是 true，否则 TF 时间戳对不上，Nav2 全部超时'
+        description='仿真必须 true，否则 TF 时间戳对不上，Nav2 全部超时'
     )
     world_arg = DeclareLaunchArgument(
         'world', default_value=world_file, description='Gazebo 世界文件路径'
     )
 
-    # ★ 同样不能省 value_type=str（见 display_navbot.launch.py 的注释）
+    # value_type=str 不能省，否则 Command 的输出被当成 YAML 解析
     robot_description = ParameterValue(
         Command(['xacro ', xacro_file]),
         value_type=str,
@@ -108,13 +88,12 @@ def generate_launch_description():
 
     # ---------------------------------------------------------------
     # ③ 把模型生成到 Gazebo 世界里
-    #    ★ 两个名字必须成对出现：
-    #        -entity      Gazebo 里的模型名
-    #        -topic       /robot_description（由上面的 rsp 提供）
-    #      写错 topic 的报错是 "Waiting for entity xml on /robot_description"，
-    #      然后一直挂着不往下走。
-    #    ★ TimerAction 延迟 3 秒：Gazebo 起得慢，
-    #      立刻 spawn 会失败并报 "Service /spawn_entity unavailable"。
+    # -entity 和 -topic 必须成对：-entity 是 Gazebo 里的模型名，
+    # -topic 指向 robot_state_publisher 提供的 /robot_description。
+    # topic 写错的话报错是 "Waiting for entity xml on /robot_description"，
+    # 然后一直挂着不往下走。
+    # 延迟 3 秒是因为 Gazebo 起得慢，立刻 spawn 会报
+    # "Service /spawn_entity unavailable"。
     # ---------------------------------------------------------------
     spawn_entity_node = TimerAction(
         period=3.0,

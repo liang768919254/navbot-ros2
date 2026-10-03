@@ -23,3 +23,6 @@ maps/*.pgm
 .idea/
 *.swp
 .DS_Store
+
+# ==== 脚本备份（v1 留档用，勿提交）====
+*.bak
