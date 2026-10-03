@@ -166,7 +166,7 @@ ros2 action send_goal /navigate_to_pose nav2_msgs/action/NavigateToPose \
 
 ### 无头环境录 GIF
 
-![导航演示](docs/navigation_demo.gif)
+
 需要图形界面但没有显示器时，用虚拟屏跑 RViz 再截图合成：
 
 ```bash
