@@ -1,0 +1,29 @@
+# navbot_bridge · 桥节点参数
+#
+# ★★ 这四个数必须和 navbot_description/urdf/navbot.xacro 完全一致，
+#    否则 /odom 会有系统性偏差（车走 1 米，地图上走了 1.05 米这种）。
+#    校验办法：xacro 里的 left/right_wheel_joint origin 是 xyz="0.0 ±0.16/2 -0.0175"
+#             → wheel_separation = 0.16
+#             → 轮子几何 cylinder radius="0.0325" → wheel_radius = 0.0325
+#
+# ★ 自检锚点：encoder_ppr / (2π × wheel_radius) = 2112 / 0.2042 = 10342.6 脉冲/米
+#   ≈ 踩坑实测/02 里手算的那个「车走 1 米 = 10343 个脉冲」
+#
+# 用法：
+#   ros2 run navbot_bridge chassis_bridge --ros-args --params-file <此文件>
+#   无硬件自测时改 port:=/tmp/ttyV1（不要把 /tmp/ttyV1 写进本文件）
+
+chassis_bridge:
+  ros__parameters:
+    # 串口设备。真机常见 /dev/ttyUSB0；建议再配一条 udev 规则固定成 /dev/navbot
+    # 以免插了别的 USB 设备后编号漂移（插拔后 ttyUSB0/ttyUSB1 互换是经典坑）。
+    port: "/dev/ttyUSB0"
+
+    # 轮距 L，单位 m。v_l = v - ωL/2，v_r = v + ωL/2
+    wheel_separation: 0.16
+
+    # 轮半径 r，单位 m。
+    wheel_radius: 0.0325
+
+    # 编码器每转脉冲数（已含减速比与四倍频）
+    encoder_ppr: 2112.0

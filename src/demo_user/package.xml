@@ -1,0 +1,21 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>demo_user</name>
+  <version>0.0.0</version>
+  <description>演示如何在其他包中调用自定义接口</description>
+  <maintainer email="liang768919254@foxmail.com">liang</maintainer>
+  <license>MIT</license>
+
+  <depend>rclpy</depend>
+  <depend>demo_interface</depend>
+
+  <test_depend>ament_copyright</test_depend>
+  <test_depend>ament_flake8</test_depend>
+  <test_depend>ament_pep257</test_depend>
+  <test_depend>python3-pytest</test_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>

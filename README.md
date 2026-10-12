@@ -29,7 +29,7 @@
 |---|---|
 | `navbot_description` | URDF/xacro 模型，关节树、惯量、雷达支架 |
 | `navbot_bringup` | launch 文件、Nav2 与 slam_toolbox 参数、Gazebo 世界、地图 |
-| `navbot_bridge` | 串口 ↔ ROS 话题桥接（真机，暂未实现） |
+| `navbot_bridge` | 串口 ↔ ROS 话题桥接（真机；仿真时用 `fake_chassis.py` 替 STM32 验证） |
 
 导航部分直接用 Nav2 官方 `bringup_launch.py`，自己只提供参数文件和地图。
 
@@ -62,21 +62,28 @@
 │   │   ├── maps/navbot_room.{pgm,yaml}  地图（pgm 由 map_saver 生成）
 │   │   ├── worlds/navbot_room.world     Gazebo 世界
 │   │   └── rviz/navbot_{nav,slam}.rviz
-│   └── navbot_bridge/             串口桥接（待实现，仅有包骨架）
+│   └── navbot_bridge/             串口桥接
+│       ├── navbot_bridge/chassis_bridge.py   O 帧 → /odom+TF+/joint_states；/cmd_vel → V 帧
+│       ├── config/bridge_params.yaml         真机串口参数
+│       └── launch/bringup_real.launch.py     真机启动
 ├── firmware/                      真机
 │   ├── navbot_chassis.c           STM32 底盘固件
 │   └── navbot_protocol.md         通信协议 v1（改代码前先看这份）
 ├── 无硬件自测/                     不接硬件也能验串口链路
 │   ├── fake_chassis.py            假底盘，可注入四类故障
-│   ├── test_protocol.py
-│   └── verify_e2e.sh              端到端验证
+│   ├── test_protocol.py           协议与运动学单测
+│   ├── verify_e2e.sh              端到端验证（10 项判据）
+│   └── test_bridge_offline.py     mock 串口验桥本身（无 pty 环境可用）
 ├── docs/
 │   ├── navigation_demo.gif        README 里的演示动图
+│   ├── ONBOARDING_新开发者上手教程.md   陌生人上手入口
+│   ├── S20_复盘_chassis_bridge实现.md   桥节点实现复盘（含实测数据）
 │   ├── 00_环境一键安装文档.md
 │   ├── A3_URDF建模概念清单.md
 │   ├── A3_URDF建模模板.md
 │   ├── A4_三包架构说明.md
 │   ├── A5_知识概念全解.md
+│   ├── B1_代码编写路线图.md
 │   ├── G1_Git推送到GitHub详细步骤.md
 │   └── P3_ROS2自主导航移动机器人_保姆级项目文档.md
 ├── setup_env.sh                   环境一键重建
@@ -234,13 +241,53 @@ Gazebo 跟不上真实时间（RTF < 1），车按仿真时间走而截图按真
 
 ## 真机路线
 
-`navbot_bridge` 目前是空壳，串口桥接待实现。已经定好的部分：
+真机用 `navbot_bridge` 的 `chassis_bridge` 节点替代 Gazebo，串口接 STM32 底盘。
+上层（Nav2 / slam_toolbox / URDF）完全复用，**只换数据来源**。
 
-- 通信协议 v1 —— [`firmware/navbot_protocol.md`](firmware/navbot_protocol.md)，ASCII 明文，上行 50 Hz 11 字段，下行 20 Hz 4 字段
-- 底盘固件 —— [`firmware/navbot_chassis.c`](firmware/navbot_chassis.c)
-- 无硬件验证 —— `fake_chassis.py` 冒充 STM32，可以注入死机、乱码、seq 停滞、零点漂移四类故障
+```bash
+# 真机启动（改 bridge_params.yaml 里的 port 指向实际串口）
+ros2 launch navbot_bridge bringup_real.launch.py
+# 或直接跑节点
+ros2 run navbot_bridge chassis_bridge --ros-args \
+  -p port:=/dev/ttyUSB0 -p wheel_separation:=0.16 \
+  -p wheel_radius:=0.0325 -p encoder_ppr:=2112.0
+```
 
-改协议前先看那份文档，两端字段必须同步。
+### 数据流
+
+```
+STM32 ──O 帧(11字段,50Hz)──▶ chassis_bridge ──▶ /odom + TF(odom→base_footprint) + /joint_states
+                              │
+       ◀──V 帧(4字段,20Hz)──   ◀── /cmd_vel（差速逆解）
+```
+
+上行 O 帧 `O,seq,enc_l,enc_r,vel_l,vel_r,pwm_l,pwm_r,vbat_mv,tick_ms,temp_c100`，
+下行 V 帧 `V,seq,vel_l,vel_r`，115200 8N1。协议全文见
+[`firmware/navbot_protocol.md`](firmware/navbot_protocol.md)，**改协议前先看那份，两端字段必须同步**。
+
+### 三个实现要点
+
+| 要点 | 为什么 |
+|---|---|
+| 读串口在**独立线程** | `readline()` 阻塞，放 spin 线程等于把执行器掐停（实测：`/ping` 卡 5.1 s、Ctrl+C 退不掉） |
+| 发布用**定时器 + 最新值** | 到达频率不可控，发布频率必须稳定；配合 0.5 s 超时防陈旧数据 |
+| **三层异常**处理 | 连接层重连（日志节流）/ 数据层静默计数（绝不逐帧打印）/ 时效层超时停发（只警告一次） |
+
+### 无硬件也能验
+
+不必等硬件到货，`fake_chassis.py` 冒充 STM32，还能注入四类故障
+（死机、乱码、seq 停滞、零点漂移）：
+
+```bash
+cd 无硬件自测 && ./verify_e2e.sh      # 10 项 e2e 判据，一条命令跑完
+python3 test_bridge_offline.py        # 无 pty 环境下的替代：mock 串口验桥本身
+```
+
+> 桥梁节点实测记录见 [`docs/S20_复盘_chassis_bridge实现.md`](docs/S20_复盘_chassis_bridge实现.md)：
+> `/odom` 49.923 Hz、乱码注入后进程存活且日志仅 2 行、`verify_e2e.sh` 通过 21 / 失败 0。
+
+底盘固件在 [`firmware/navbot_chassis.c`](firmware/navbot_chassis.c)（骨架，25 个 TODO 未填；
+本项目走软件方向，固件不作要求）。
 
 ## 已知问题
 

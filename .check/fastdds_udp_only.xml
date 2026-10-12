@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!--
+  禁用 FastDDS 的共享内存(SHM)传输，强制走 UDP。
+  适用场景：/dev/shm 不可用或过小（容器/沙箱）导致
+  "RTPS_TRANSPORT_SHM Error: Failed to create segment" 且
+  service 调用莫名丢失（典型表现：Nav2 lifecycle 节点卡在 unconfigured）。
+
+  用法：
+    export FASTRTPS_DEFAULT_PROFILES_FILE=/path/to/this.xml
+    # 可选（跳过自带的 SHM 描述）：
+    export FASTRTPS_IGNORE_DEFAULT_PROFILE_FILE=1   # 不需要，留着默认即可
+-->
+<dds xmlns="http://www.eprosima.com/XMLSchemas/fastRTPS_Profiles">
+    <profiles>
+        <transport_descriptors>
+            <transport_descriptor>
+                <transport_id>udp_only</transport_id>
+                <type>UDPv4</type>
+            </transport_descriptor>
+        </transport_descriptors>
+        <participant profile_name="udp_participant" is_default_profile="true">
+            <rtps>
+                <userTransports>
+                    <transport_id>udp_only</transport_id>
+                </userTransports>
+                <useBuiltinTransports>false</useBuiltinTransports>
+            </rtps>
+        </participant>
+    </profiles>
+</dds>

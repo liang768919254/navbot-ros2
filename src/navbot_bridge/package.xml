@@ -2,10 +2,10 @@
 <?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
   <name>navbot_bridge</name>
-  <version>0.0.0</version>
-  <description>TODO: Package description</description>
+  <version>0.1.0</version>
+  <description>navbot 底盘桥节点 chassis_bridge：STM32 串口协议 v1 &lt;-&gt; ROS2（上行 O 帧 -> /odom + TF + /joint_states，下行 /cmd_vel -> V 帧）</description>
   <maintainer email="liang768919254@foxmail.com">liang</maintainer>
-  <license>TODO: License declaration</license>
+  <license>MIT</license>
 
   <depend>rclpy</depend>
   <depend>geometry_msgs</depend>

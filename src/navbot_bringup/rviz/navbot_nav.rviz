@@ -114,9 +114,13 @@ Visualization Manager:
 
     # ★ 粒子云：AMCL 的 2000 个粒子。收敛时应该缩成一小团
     #   ★★ 如果一直散成一大片 = 定位没收敛，先别发目标
+    # ⚠️ 默认【关闭】：AMCL 配的是 min 500 / max 2000 个粒子，RViz 每帧要画
+    #    2000 个 3D 箭头，核显（Iris Xe）上会直接把 GUI 拖死，表现为
+    #    「一点 2D Pose Estimate 就卡住」，再往后内存涨爆被内核 SIGKILL（exit code -9）。
+    #    想看粒子云收敛过程时再手动勾选，看完立刻取消。
     - Class: rviz_default_plugins/PoseArray
       Name: ParticleCloud
-      Enabled: true
+      Enabled: false
       Topic:
         Depth: 5
         Durability Policy: Volatile
@@ -174,11 +178,19 @@ Visualization Manager:
     - Class: rviz_default_plugins/Select
     # ★★ 这两个是导航必用的：
     #   SetInitialPose  → 界面显示为 "2D Pose Estimate"
-    #   GoalTool        → Nav2 会替换成 "Nav2 Goal"
+    #   GoalTool        → 界面显示为 "Nav2 Goal"
+    #
+    # ★ 2026-10-09 修正：GoalTool 的类名必须写成 nav2_rviz_plugins/GoalTool。
+    #   装了 Nav2 之后，这个类由 nav2_rviz_plugins 提供，
+    #   rviz_default_plugins/GoalTool 根本不存在，写错了会报：
+    #     PluginlibFactory: The plugin for class 'rviz_default_plugins/GoalTool'
+    #     failed to load ... Declared types are nav2_rviz_plugins/GoalTool ...
+    #   症状是工具栏里「Nav2 Goal」按钮加载不出来。
+    #   （这份配置原是在没装 Nav2 的环境里保存的，换机器就会踩）
     - Class: rviz_default_plugins/SetInitialPose
       Topic:
         Value: /initialpose
-    - Class: rviz_default_plugins/GoalTool
+    - Class: nav2_rviz_plugins/GoalTool
 
   Views:
     Current:

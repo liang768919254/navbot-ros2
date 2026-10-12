@@ -1,0 +1,42 @@
+# /etc/udev/rules.d/99-navbot.rules
+# navbot 真机：固定「雷达」和「底盘（STM32）」的串口名
+#
+# 安装（到货后执行）：
+#   sudo cp 99-navbot.rules /etc/udev/rules.d/
+#   sudo udevadm control --reload
+#   sudo udevadm trigger
+# 验证：插上设备后 ls -l /dev/rplidar /dev/navbot 应各出现一个符号链接
+#
+# ★★ 为什么不能只写 VID:PID？★★
+#   RPLIDAR A1 高速版（内置 USB 串口芯片）和 STM32 蓝板（USB-TTL），
+#   极可能是同一种芯片（CH340，VID:PID = 1a86:7523）。
+#   如果两条规则都用 VID:PID，两个设备会「同时」匹配 /dev/rplidar 和
+#   /dev/navbot，符号链接指向谁全靠运气 —— 这是真机联调最隐蔽的坑。
+#   所以必须用「能唯一区分两者」的属性：KERNELS（USB 端口路径）或
+#   ATTRS{serial}（芯片序列号）。到货后用下面「查证」命令拿到真实值再填。
+
+# ---------------------------------------------------------------------------
+# 0) 先给常见 USB 串口芯片读写权限（解决 permission denied，不用折腾 dialout）
+# ---------------------------------------------------------------------------
+SUBSYSTEM=="tty", ATTRS{idVendor}=="10c4", ATTRS{idProduct}=="ea60", MODE="0666"   # CP2102
+SUBSYSTEM=="tty", ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="7523", MODE="0666"   # CH340
+
+# ---------------------------------------------------------------------------
+# 1) 雷达 → /dev/rplidar（下面三种方式三选一，按查证结果取消注释）
+# ---------------------------------------------------------------------------
+# 方式 A：雷达和 STM32 芯片不同（如雷达是 CP2102）→ 直接按 VID:PID
+#SUBSYSTEM=="tty", ATTRS{idVendor}=="10c4", ATTRS{idProduct}=="ea60", SYMLINK+="rplidar"
+
+# 方式 B：按 USB 端口路径（KERNELS）—— 稳定到「插哪个口」，换口会变
+#  查证：udevadm info -a -n /dev/ttyUSB0 | grep -E "KERNELS|SUBSYSTEM"
+#SUBSYSTEM=="tty", KERNELS=="1-1.2:1.0", SYMLINK+="rplidar"
+
+# 方式 C：按芯片序列号（ATTRS{serial}）—— 最精确，前提是芯片有唯一序列号
+#  查证：udevadm info -a -n /dev/ttyUSB0 | grep -i serial
+#SUBSYSTEM=="tty", ATTRS{serial}=="换成雷达的真实序列号", SYMLINK+="rplidar"
+
+# ---------------------------------------------------------------------------
+# 2) STM32 底盘 → /dev/navbot（同上，选一个能唯一区分它的属性）
+# ---------------------------------------------------------------------------
+#SUBSYSTEM=="tty", KERNELS=="1-1.4:1.0", SYMLINK+="navbot"
+#SUBSYSTEM=="tty", ATTRS{serial}=="换成 STM32 转接板的真实序列号", SYMLINK+="navbot"

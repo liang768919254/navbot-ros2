@@ -1,0 +1,40 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>sensor_interfaces</name>
+  <version>0.1.0</version>
+  <description>
+    sensor_bridge 的自定义接口包：SensorData.msg（一帧传感器数据）。
+    必须是 ament_cmake 包 —— Python 包生成不了接口。
+  </description>
+  <maintainer email="liang768919254@foxmail.com">liang</maintainer>
+  <license>MIT</license>
+
+  <!-- ① 接口包用 ament_cmake，不能用 ament_python -->
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <!-- ② 生成器：把 .msg 变成 C++/Python 的消息类 -->
+  <build_depend>rosidl_default_generators</build_depend>
+
+  <!-- ③ 运行时：别人 import 这些消息类时需要 -->
+  <exec_depend>rosidl_default_runtime</exec_depend>
+
+  <!-- ④ msg 里用了 std_msgs/Header，所以要声明 -->
+  <depend>std_msgs</depend>
+
+  <!-- ⑤ ★ 最容易漏的一行 ★
+       漏了会【构建期直接失败】（实测确认，rosidl_generate_interfaces.cmake:229 里是
+       message(FATAL_ERROR)）：
+         Packages installing interfaces must include
+         '<member_of_group>rosidl_interface_packages</member_of_group>' in their package.xml
+       好消息是它报得很明确、不用猜；坏消息是新手常把"没写这行"误当成"CMake 环境坏了"。
+       作用：把本包登记进「接口包」这个组，rosidl 才会为它生成并注册接口。 -->
+  <member_of_group>rosidl_interface_packages</member_of_group>
+
+  <test_depend>ament_lint_auto</test_depend>
+  <test_depend>ament_lint_common</test_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

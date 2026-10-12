@@ -37,6 +37,16 @@ set -u
 #    这也解释了为什么很多人「单独 source 没问题、写进脚本就挂」。
 set +u
 source /opt/ros/humble/setup.bash
+# ★ 加载本项目工作空间（chassis_bridge 装在这里面，不 source 就永远找不到）。
+#   优先级：环境变量 NAVBOT_WS > 脚本所在仓库的 install。
+#   没有就跳过（脚本仍能跑前半段，不会崩）。
+if [ -z "${NAVBOT_WS:-}" ]; then
+  # 脚本在 <repo>/无硬件自测/ 下，往上一级就是仓库根
+  NAVBOT_WS="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+fi
+if [ -f "${NAVBOT_WS}/install/setup.bash" ]; then
+  source "${NAVBOT_WS}/install/setup.bash"
+fi
 set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -46,6 +56,8 @@ mkdir -p "${LOG_DIR}"
 PASS=0
 FAIL=0
 SKIP=0
+STALE_INSTALL=0        # ★ 第 4 组的新鲜度检查结果：install 是否落后于 src
+SERIAL_OK=0            # ★ 桥是否真的连上了串口（决定第 6 组是否有效）
 
 c_green="\033[32m"; c_red="\033[31m"; c_yellow="\033[33m"; c_dim="\033[2m"; c_reset="\033[0m"
 
@@ -379,9 +391,73 @@ hdr "4. 检查 chassis_bridge 是否已写好"
 #    chassis_bridge 是你要自己写的节点（见教程 §3.5）。
 #    没写之前，后面几步会跳过 —— 这不是失败，是提示你该动手了。
 BRIDGE_FOUND=0
-if ros2 pkg executables navbot_bringup 2>/dev/null | grep -q "chassis_bridge"; then
+if ros2 pkg executables navbot_bridge 2>/dev/null | grep -q "chassis_bridge"; then
   BRIDGE_FOUND=1
-  ok "找到 navbot_bringup 的 chassis_bridge 可执行"
+  ok "找到 navbot_bridge 的 chassis_bridge 可执行"
+
+  # --------------------------------------------------------------------------
+  # ★★ 新鲜度检查：`ros2 run` 实际加载的那份代码，是不是当前 src/ 的源码？
+  #
+  # 为什么需要这一步（2026-10-07 实测踩坑）：
+  #   ROS2 里「src/ 不是运行时的代码」——你改完 src/ 直接 ros2 run，
+  #   跑的可能是上一次构建的旧产物。
+  #   症状很迷惑：`ros2 pkg executables` 能列出（旧的可执行还在），
+  #   第 4 组判据通过 → 第 5 组启动即崩，报的还是源码里早就删掉的
+  #   NotImplementedError，行号也对不上 —— 会让人以为代码没保存。
+  #
+  # ★★ 判据为什么必须用「Python 解析真实加载路径」而不是猜 install 路径：
+  #   colcon build 有两种模式，install 里的结构**完全不同**：
+  #
+  #   (A) 默认 copy 模式：
+  #         install/<pkg>/lib/python3.X/site-packages/<pkg>/<node>.py  ← 物理副本
+  #   (B) --symlink-install 模式：
+  #         install/.../site-packages/ 下**没有 .py**，只有 <pkg>.egg-link
+  #         内容指向 build/<pkg>/
+  #         build/<pkg>/<pkg> → src/<pkg>/<pkg>  是符号链接
+  #         → 改 src/ 的 .py 立即生效，本来就不需要重新 build
+  #
+  #   第一版脚本只按 (A) 找文件，用户切到 (B) 后文件不存在 →
+  #   误报「构建产物缺失」（假失败）。教训：别猜路径，直接问 Python。
+  # --------------------------------------------------------------------------
+  SRC_PY="${SCRIPT_DIR}/../src/navbot_bridge/navbot_bridge/chassis_bridge.py"
+  WS_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+
+  # 让 Python 在「和 ros2 run 相同的环境」里报出它实际会加载哪个文件
+  #   ★ 必须 source workspace 的 setup.bash，否则 import 不到本包
+  LOADED_PY=$(bash -c "
+    source '${WS_DIR}/install/setup.bash' >/dev/null 2>&1
+    python3 - <<'PYEOF' 2>/dev/null
+import importlib.util, os
+try:
+    spec = importlib.util.find_spec('navbot_bridge.chassis_bridge')
+    print(os.path.realpath(spec.origin) if spec and spec.origin else '')
+except Exception:
+    print('')
+PYEOF
+  " 2>/dev/null | tail -1)
+
+  if [ -z "${LOADED_PY}" ]; then
+    ng "无法解析 chassis_bridge 的加载路径（workspace 可能没 source 或没 build）"
+    echo "      ★ 请执行：cd ${WS_DIR} && colcon build --packages-select navbot_bridge"
+    STALE_INSTALL=1
+  elif [ ! -f "${SRC_PY}" ]; then
+    skip "未找到源码 ${SRC_PY}，跳过新鲜度检查"
+  else
+    # ★ 用 realpath 归一化：symlink 模式下 build/ 里的路径会解析回 src/，
+    #   此时两者是同一个文件 → 天然一致，正是我们想要的结论。
+    if cmp -s "${SRC_PY}" "${LOADED_PY}"; then
+      ok "运行时加载的代码与 src/ 一致（${LOADED_PY#${WS_DIR}/}）"
+    else
+      ng "运行时加载的代码与 src/ 不一致（改了源码但没重新 build）"
+      echo "      源码:     $(stat -c '%y' "${SRC_PY}" | cut -d. -f1)  ${SRC_PY#${WS_DIR}/}"
+      echo "      实际加载: $(stat -c '%y' "${LOADED_PY}" | cut -d. -f1)  ${LOADED_PY#${WS_DIR}/}"
+      echo "      ★ 差异行数：$(diff "${SRC_PY}" "${LOADED_PY}" | grep -c '^[<>]') 行"
+      echo "      ★ 修复：cd ${WS_DIR} && colcon build --packages-select navbot_bridge"
+      echo "        想让以后改完立即生效，加 --symlink-install（一次即可，之后改 .py 免 build）"
+      echo "      ★ 下面第 5 组会用旧代码运行，结果不可信 —— 先 build 再重跑。"
+      STALE_INSTALL=1
+    fi
+  fi
 else
   skip "chassis_bridge 还没写（或还没 colcon build）"
   echo "      ★ 这是你自己要写的节点。写好并 colcon build 之后重跑本脚本，"
@@ -391,8 +467,8 @@ fi
 # ============================================================================
 hdr "5. 起桥，验 ROS2 话题层面"
 # ============================================================================
-if [ "${BRIDGE_FOUND}" -eq 1 ]; then
-  ros2 run navbot_bringup chassis_bridge --ros-args \
+if [ "${BRIDGE_FOUND}" -eq 1 ] && [ "${STALE_INSTALL}" -eq 0 ]; then
+  ros2 run navbot_bridge chassis_bridge --ros-args \
     -p port:=/tmp/ttyV1 \
     -p wheel_separation:=0.16 \
     -p wheel_radius:=0.0325 \
@@ -406,6 +482,15 @@ if [ "${BRIDGE_FOUND}" -eq 1 ]; then
     tail -20 "${LOG_DIR}/bridge.log" | sed 's/^/      /'
   else
     ok "桥进程存活"
+
+    # ---- 5.0 串口到底连上没有（★ 决定第 6 组是否有意义）----
+    #   桥连不上串口时进程照样活着、话题照样存在，只是没数据。
+    #   不查这一条，第 6 组的「注入乱码后桥仍存活」会误报为通过。
+    if grep -q "串口已打开\|串口打开成功" "${LOG_DIR}/bridge.log" 2>/dev/null; then
+      SERIAL_OK=1
+    else
+      SERIAL_OK=0
+    fi
 
     # ---- 5.1 /odom 话题存在且有数据 ----
     if timeout 5 ros2 topic list 2>/dev/null | grep -qx "/odom"; then
@@ -465,18 +550,33 @@ if [ "${BRIDGE_FOUND}" -eq 1 ]; then
     fi
   fi
 else
-  skip "ROS2 话题层检查（需要 chassis_bridge）"
-  skip "TF 链检查（需要 chassis_bridge）"
-  skip "/joint_states 检查（需要 chassis_bridge）"
+  if [ "${STALE_INSTALL}" -eq 1 ]; then
+    skip "ROS2 话题层检查（运行时代码与 src 不一致，先 colcon build）"
+    skip "TF 链检查（运行时代码与 src 不一致，先 colcon build）"
+    skip "/joint_states 检查（运行时代码与 src 不一致，先 colcon build）"
+  else
+    skip "ROS2 话题层检查（需要 chassis_bridge）"
+    skip "TF 链检查（需要 chassis_bridge）"
+    skip "/joint_states 检查（需要 chassis_bridge）"
+  fi
 fi
 
 # ============================================================================
 hdr "6. 故障注入：验证坏数据不会崩节点"
 # ============================================================================
+# ★★ 守卫必须同时满足两条：
+#    ① 桥进程活着
+#    ② 串口真的连上了（SERIAL_OK）
+#    只查 ① 会出假阳性：无 pty 时桥连不上串口，进程照样活着，
+#    于是「乱码注入后桥仍存活」「/odom 仍在发布」都会误判为通过 ——
+#    而那三个 ✓ 其实什么都没验到。
 if [ "${BRIDGE_FOUND}" -eq 1 ] && [ -n "${BRIDGE_PID:-}" ] \
-   && kill -0 "${BRIDGE_PID}" 2>/dev/null; then
+   && kill -0 "${BRIDGE_PID}" 2>/dev/null \
+   && [ "${SERIAL_OK:-0}" -eq 1 ]; then
   echo "  停掉当前假底盘，换成「每 5 帧插一帧乱码」的版本..."
-  kill "${FAKE_PID}" 2>/dev/null
+  # ★ 降级路径（无 pty）下 FAKE_PID 从未定义，set -u 会在此中止整个脚本。
+  #   加 :- 兜底，让它无论走哪条路都安全。
+  kill "${FAKE_PID:-}" 2>/dev/null
   sleep 0.5
 
   /usr/bin/python3 -u "${SCRIPT_DIR}/fake_chassis.py" \
@@ -506,8 +606,17 @@ if [ "${BRIDGE_FOUND}" -eq 1 ] && [ -n "${BRIDGE_PID:-}" ] \
     ng "桥日志 ${BADLOG_LINES} 行，疑似坏帧刷屏 —— 应该静默计数，只报统计"
   fi
 else
-  skip "故障注入测试（需要 chassis_bridge）"
-  skip "坏帧静默检查（需要 chassis_bridge）"
+  if [ "${BRIDGE_FOUND}" -eq 1 ] && [ "${SERIAL_OK:-0}" -ne 1 ]; then
+    skip "故障注入测试（串口没连上，注入乱码也无从谈起）"
+    skip "坏帧静默检查（同上）"
+    echo "      ★ 本环境串口不可用（无 pty 或 socat 未建出 /tmp/ttyV1）。"
+    echo "        桥的功能判据请改用："
+    echo "          python3 src/navbot_bridge/test/test_bridge_offline.py"
+    echo "        它用 mock 串口驱动同一个节点，18 项判据一条不少。"
+  else
+    skip "故障注入测试（需要 chassis_bridge）"
+    skip "坏帧静默检查（需要 chassis_bridge）"
+  fi
 fi
 
 # ============================================================================
@@ -515,6 +624,12 @@ hdr "汇总"
 # ============================================================================
 echo "  通过 ${PASS} | 失败 ${FAIL} | 跳过 ${SKIP}"
 echo
+if [ "${STALE_INSTALL}" -eq 1 ]; then
+  echo -e "  ${c_red}★ 根因提醒：运行时加载的不是当前 src/ 的代码，本次结果不可信。${c_reset}"
+  echo "     cd $(cd "${SCRIPT_DIR}/.." && pwd) && colcon build --packages-select navbot_bridge --symlink-install"
+  echo "     然后重跑本脚本。"
+  echo
+fi
 if [ "${FAIL}" -eq 0 ]; then
   if [ "${SKIP}" -gt 0 ]; then
     echo -e "  ${c_yellow}PC 侧已验证的部分全过。${c_reset}"

@@ -26,3 +26,15 @@ maps/*.pgm
 
 # ==== 脚本备份（v1 留档用，勿提交）====
 *.bak
+docs/_诊断_20261001_nav_gif/
+
+# ==== STM32 固件编译产物 ====
+firmware/navbot_chassis/build/
+
+# ==== 调试日志与中间文件（诊断时生成，可重新生成，勿提交）====
+*.log
+*.gv
+.check/logs/
+.check/maps/
+.check/*.txt
+.check/*.err

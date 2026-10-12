@@ -1,0 +1,28 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>sensor_bridge</name>
+  <version>0.0.0</version>
+  <description>sensor_bridge —— ROS2 21 讲结业项目：传感器数据进 ROS2 并可视化</description>
+  <maintainer email="liang768919254@foxmail.com">liang</maintainer>
+  <license>MIT</license>
+
+  <depend>rclpy</depend>
+  <depend>std_msgs</depend>
+  <!-- 阶段三：自定义消息包（写 depend 而非 exec_depend，保证 colcon 先编接口包） -->
+  <depend>sensor_interfaces</depend>
+  <!-- 阶段二：串口桥依赖 pyserial（apt 包名 python3-serial） -->
+  <exec_depend>python3-serial</exec_depend>
+  <!-- launch 文件用到的两个包，漏了 ros2 launch 会找不到 launch 描述 -->
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+
+  <test_depend>ament_copyright</test_depend>
+  <test_depend>ament_flake8</test_depend>
+  <test_depend>ament_pep257</test_depend>
+  <test_depend>python3-pytest</test_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>

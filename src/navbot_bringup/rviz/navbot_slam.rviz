@@ -97,7 +97,9 @@ Visualization Manager:
     - Class: rviz_default_plugins/MoveCamera
     - Class: rviz_default_plugins/Select
     - Class: rviz_default_plugins/SetInitialPose
-    - Class: rviz_default_plugins/GoalTool
+    # ★ 同 navbot_nav.rviz：装了 Nav2 的环境必须用 nav2_rviz_plugins/GoalTool，
+    #   写成 rviz_default_plugins/GoalTool 会加载失败（2026-10-09 修正）
+    - Class: nav2_rviz_plugins/GoalTool
 
   Views:
     Current:
