@@ -159,7 +159,7 @@ env -i HOME=$HOME PATH=/usr/local/bin:/usr/bin:/bin TERM=xterm bash -c \
 > ⚠️ 别把这条误读成「`gui:=false` 不能用」。真实原因是没有 X display，不是 gui 参数。
 > 本机有显示器时默认 `gui:=true`，直接跑即可。
 
-### 新增：验收脚本 `tools/check_sim.sh`
+### 新增：验收脚本 `tools/env/check_sim.sh`
 
 一条命令跑完 W3 全部判据，G1 阶段继续用：
 
@@ -167,7 +167,7 @@ env -i HOME=$HOME PATH=/usr/local/bin:/usr/bin:/bin TERM=xterm bash -c \
 # 终端 1
 ros2 launch navbot_bringup sim_navbot.launch.py
 # 终端 2
-~/navbot_ws/tools/check_sim.sh
+~/navbot_ws/tools/env/check_sim.sh
 ```
 
 检查 5 组：必备话题存在 → 发布者数量 → `/odom` `/scan` 频率 → TF 链 `odom→base_footprint` → `/scan` 数据有效性。
@@ -180,7 +180,73 @@ ros2 launch navbot_bringup sim_navbot.launch.py
 source /opt/ros/humble/setup.bash && source ~/navbot_ws/install/setup.bash
 ros2 launch navbot_bringup sim_navbot.launch.py
 # 另开终端
-~/navbot_ws/tools/check_sim.sh
+~/navbot_ws/tools/env/check_sim.sh
 ```
 
 **出口判据**：脚本输出 `0 FAIL`，其中 `/odom` 40~60 Hz、`/scan` 7~13 Hz。
+
+
+---
+
+# S0 进度 · 仓库补洞与迁移（2026-10-29 20:30）
+
+## 做了什么
+
+工作空间从 `~/桌面/具身智能学习路线/bridge/ros_study` 迁到 `~/navbot_ws`，
+git 历史完整保留（clone 旧仓库后把 `.git` 迁过来，不是重新 init）。
+
+| 项 | 结果 |
+|---|---|
+| 工作空间根 | `~/navbot_ws`（纯 ASCII，规避中文路径炸 map_server / AMCL） |
+| 提交 | `7403608` → 已 push 到 `github.com/liang768919254/navbot-ros2` |
+| 验收体系 | `无硬件自测/` → `tools/verify/`，5 脚本 2179 行全在 |
+| 环境脚本 | 顶层散落 → `tools/env/`，去掉 `/mnt/workspace` 硬编码 |
+| 排障沉淀 | `.check/` → `tools/diag/`（fastdds UDP-only、auto_scan） |
+| 移除 | 9 个练习包 + 8 个一次性调试脚本（原件保留在旧目录） |
+| 保留 | `firmware/` 133 个 C 文件、`docs/` 14 份文档 + 演示 GIF |
+
+## 路径自动探测（这次的核心改造）
+
+三个脚本不再绑死目录层级，统一规则：
+
+```
+优先级：环境变量 NAVBOT_WS > 从脚本位置向上找含 src/ 的目录 > 兜底默认值
+```
+
+- `tools/verify/verify_e2e.sh`：原来靠 `SCRIPT_DIR/..`，搬到 `tools/verify/` 后层级变了
+- `tools/verify/crosscheck_bridge_functions.py`：同步改（`_find_ws_root()`）
+- `tools/env/setup_env.sh` / `record_navigation.sh`：原来写死 `/mnt/workspace`
+
+好处：同一份脚本在 `~/navbot_ws`、`/mnt/workspace`（云实例）、任何 clone 路径下都能跑。
+
+## 实测数据（2026-10-29 20:25）
+
+```
+crosscheck_bridge_functions.py  →  61 通过 / 0 失败
+test_bridge_offline.py          →  18 通过 / 0 失败   （/odom 48.5 Hz，frame_id 正确）
+verify_e2e.sh                   →  16 通过 / 4 失败 / 3 跳过
+```
+
+**4 项失败全是沙箱无 pty 导致**（`/dev/ptmx` 不存在 → `out of pty devices`），
+失败项全部集中在串口物理层；同一批判据在 offline 测试里 18/18 全过。
+有 `/dev/pts` 的本机 Ubuntu 上不会出现。
+
+## 克隆验证（陌生人视角）
+
+```bash
+git clone git@github.com:liang768919254/navbot-ros2.git
+cd navbot-ros2
+python3 tools/verify/crosscheck_bridge_functions.py   # → 61 通过 / 0 失败
+```
+
+脚本权限（100755）在 clone 后保留，不需要手动 `chmod +x`。
+
+## S0 判据核对
+
+| 判据 | 状态 |
+|---|---|
+| 5 个脚本在仓库里 | ✅ `tools/verify/` |
+| 路径不写死 `~/桌面` | ✅ 向上自动探测 |
+| README 有「怎么验证」 | ✅ 验收体系章节 + 实测数字 |
+| push 后 GitHub 可见 | ✅ `7403608` |
+| 换目录 clone 仍能跑 | ✅ 已实测 |
