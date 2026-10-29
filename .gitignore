@@ -10,8 +10,11 @@ __pycache__/
 .eggs/
 .pytest_cache/
 
-# ==== 无硬件自测的临时日志 ====
-无硬件自测/_e2e_logs/
+# ==== 无硬件验收体系的临时日志 ====
+tools/verify/_e2e_logs/
+
+# ==== 练习用工作空间（含 build 产物，不入库）====
+launch_ws/
 
 # ==== 地图产物 ====
 # navbot_room.pgm 是 map_saver 建图生成的二进制大文件，可重新生成。
@@ -38,3 +41,10 @@ firmware/navbot_chassis/build/
 .check/maps/
 .check/*.txt
 .check/*.err
+
+# ==== 排障实测产物 ====
+.check/logs/
+.check/maps/
+
+# ==== TF 树渲染产物（verify_e2e.sh 每次运行重新生成）====
+tools/verify/frames_*

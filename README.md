@@ -7,7 +7,7 @@
 
 
 > 车在 `navbot_room` 房间里沿方形路线走一圈，回到起点成环。
-> 录制命令：`bash record_navigation.sh square`（无头环境，脚本用 Xvfb 起虚拟屏跑 RViz）。
+> 录制命令：`bash tools/env/record_navigation.sh square`（无头环境，脚本用 Xvfb 起虚拟屏跑 RViz）。
 
 ## 目录
 
@@ -23,13 +23,17 @@
 
 ## 系统组成
 
-三个包，依赖单向，没有循环：
+四个包，依赖单向，没有循环：
 
-| 包 | 职责 |
-|---|---|
-| `navbot_description` | URDF/xacro 模型，关节树、惯量、雷达支架 |
-| `navbot_bringup` | launch 文件、Nav2 与 slam_toolbox 参数、Gazebo 世界、地图 |
-| `navbot_bridge` | 串口 ↔ ROS 话题桥接（真机；仿真时用 `fake_chassis.py` 替 STM32 验证） |
+| 包 | 职责 | 状态 |
+|---|---|---|
+| `navbot_description` | URDF/xacro 模型，关节树、惯量、雷达支架 | 完成（7 link + 5 惯性宏） |
+| `navbot_bringup` | launch 文件、Nav2 与 slam_toolbox 参数、Gazebo 世界、地图 | 完成 |
+| `navbot_bridge` | 串口 ↔ ROS 话题桥接（Python 参照实现，448 行） | 完成，36 项测试 |
+| `navbot_chassis` | **C++ 版同一节点**（rclcpp） | **骨架，5 个 TODO 未填** |
+
+`navbot_bridge` 与 `navbot_chassis` 是**同一个节点的两种实现**，同时存在是故意的：
+Python 版是标准答案，C++ 版写完后用它逐字段对照，行为不一致就是 C++ 版错了。
 
 导航部分直接用 Nav2 官方 `bringup_launch.py`，自己只提供参数文件和地图。
 
@@ -43,7 +47,7 @@
 
 ```
 .
-├── src/                            ROS2 工作空间
+├── src/                            ROS2 工作空间（4 个包）
 │   ├── navbot_description/         模型
 │   │   ├── urdf/
 │   │   │   ├── navbot.xacro           机器人本体（主文件，被下面两个引用）
@@ -51,47 +55,42 @@
 │   │   │   └── navbot.gazebo.xacro    Gazebo 插件：雷达、底盘、差速器
 │   │   ├── launch/display_navbot.launch.py
 │   │   └── rviz/navbot_check.rviz
-│   ├── navbot_bringup/            启动与配置
+│   ├── navbot_bringup/             启动与配置
 │   │   ├── launch/
 │   │   │   ├── sim_navbot.launch.py     只起仿真，不含 Nav2
 │   │   │   ├── slam_mapping.launch.py   建图
 │   │   │   └── nav_bringup.launch.py    定位 + 导航
-│   │   ├── config/
-│   │   │   ├── nav2_params.yaml
-│   │   │   └── slam_toolbox_params.yaml
+│   │   ├── config/{nav2_params,slam_toolbox_params}.yaml
 │   │   ├── maps/navbot_room.{pgm,yaml}  地图（pgm 由 map_saver 生成）
 │   │   ├── worlds/navbot_room.world     Gazebo 世界
 │   │   └── rviz/navbot_{nav,slam}.rviz
-│   └── navbot_bridge/             串口桥接
-│       ├── navbot_bridge/chassis_bridge.py   O 帧 → /odom+TF+/joint_states；/cmd_vel → V 帧
-│       ├── config/bridge_params.yaml         真机串口参数
-│       └── launch/bringup_real.launch.py     真机启动
-├── firmware/                      真机
-│   ├── navbot_chassis.c           STM32 底盘固件
-│   └── navbot_protocol.md         通信协议 v1（改代码前先看这份）
-├── 无硬件自测/                     不接硬件也能验串口链路
-│   ├── fake_chassis.py            假底盘，可注入四类故障
-│   ├── test_protocol.py           协议与运动学单测
-│   ├── verify_e2e.sh              端到端验证（10 项判据）
-│   └── test_bridge_offline.py     mock 串口验桥本身（无 pty 环境可用）
-├── docs/
-│   ├── navigation_demo.gif        README 里的演示动图
-│   ├── ONBOARDING_新开发者上手教程.md   陌生人上手入口
-│   ├── S20_复盘_chassis_bridge实现.md   桥节点实现复盘（含实测数据）
-│   ├── 00_环境一键安装文档.md
-│   ├── A3_URDF建模概念清单.md
-│   ├── A3_URDF建模模板.md
-│   ├── A4_三包架构说明.md
-│   ├── A5_知识概念全解.md
-│   ├── B1_代码编写路线图.md
-│   ├── G1_Git推送到GitHub详细步骤.md
-│   └── P3_ROS2自主导航移动机器人_保姆级项目文档.md
-├── setup_env.sh                   环境一键重建
-├── check_env.sh                   环境体检
-├── check_sim.sh                   仿真层四道门体检
-├── record_navigation.sh           无头环境录导航 GIF
-├── diag_ros_apt_key.sh            apt 源与密钥专项诊断
-├── audit_scripts.sh               脚本自审
+│   ├── navbot_bridge/              串口桥接（Python 参照实现）
+│   │   ├── navbot_bridge/chassis_bridge.py   O 帧 → /odom+TF+/joint_states；/cmd_vel → V 帧
+│   │   ├── config/bridge_params.yaml         真机串口参数
+│   │   └── launch/bringup_real.launch.py     真机启动
+│   └── navbot_chassis/             C++ 版同一节点（rclcpp，骨架）
+│       └── src/chassis_node.cpp
+├── tools/                          不需要 ROS 技能树也能跑的工具
+│   ├── verify/                     无硬件验收体系（5 脚本 / 2179 行）
+│   │   ├── verify_e2e.sh              端到端 10 组判据
+│   │   ├── fake_chassis.py            假底盘，可注入四类故障
+│   │   ├── test_protocol.py           协议与运动学单测（44 项）
+│   │   ├── crosscheck_bridge_functions.py  桥内纯函数逐值对拍（61 条）
+│   │   └── sim_integration_check.py   仿真侧集成检查
+│   ├── env/                        环境层
+│   │   ├── setup_env.sh               一键重建（幂等，15~25 min）
+│   │   ├── check_env.sh               环境体检
+│   │   ├── check_sim.sh               仿真四道门体检
+│   │   ├── record_navigation.sh       无头环境录导航 GIF
+│   │   ├── diag_ros_apt_key.sh        apt 源与密钥专项诊断
+│   │   └── audit_scripts.sh           脚本自审
+│   └── diag/                       排障实测沉淀
+│       ├── fastdds_udp_only.xml       容器里绕开 SHM，强制 UDP
+│       └── auto_scan.py               自动走位 + 全向扫描
+├── firmware/                       真机
+│   ├── navbot_chassis/             STM32 底盘固件（CubeMX 工程，25 个 TODO 未填）
+│   └── navbot_protocol.md          通信协议 v1（改代码前先看这份）
+├── docs/                           14 份文档 + 演示动图
 └── README.md
 ```
 
@@ -102,17 +101,17 @@
 Ubuntu 22.04 + ROS2 Humble。一条命令重建环境层（装包、配国内源、编译工作空间），15~25 分钟，幂等可重复跑：
 
 ```bash
-cd /mnt/workspace
-bash setup_env.sh
+bash tools/env/setup_env.sh          # 在仓库任意位置均可，工作空间根自动探测
 ```
 
 装完先体检一次：
 
 ```bash
-bash check_env.sh
+bash tools/env/check_env.sh
 ```
 
-实例重置后环境层会丢，`/mnt/workspace` 是持久 NAS 所以源码不受影响，重跑 `setup_env.sh` 即可。
+脚本不写死工作空间路径：优先用环境变量 `NAVBOT_WS`，否则从脚本位置向上找含 `src/` 的目录，
+所以 `~/navbot_ws`、`/mnt/workspace`（云实例）和自定义位置都能直接跑。
 
 装出来的包数应该是 211（按需安装，不是 desktop 全套，不必追求 300+）。
 
@@ -185,15 +184,27 @@ Gazebo 跟不上真实时间（RTF < 1），车按仿真时间走而截图按真
 
 ## 脚本
 
+全部在 `tools/` 下，分三类。
+
+**环境层**（`tools/env/`）
+
 | 脚本 | 用途 |
 |---|---|
-| `setup_env.sh` | 环境一键重建（装包、配源、编译） |
+| `setup_env.sh` | 环境一键重建（装包、配源、编译），路径自动探测 |
 | `check_env.sh` | 3 秒体检，输出缺什么和对应命令；`--fix` 自动补 |
 | `check_sim.sh` | 仿真层四道门体检（spawn / 话题 / TF）；`--diag` 只读快照 |
 | `record_navigation.sh` | 无头环境录导航 GIF；`--diag` 现场诊断 |
 | `diag_ros_apt_key.sh` | apt 源与 GPG 密钥专项诊断 |
 | `audit_scripts.sh` | 脚本自审，抓 `bash -n` 查不到的错 |
-| `无硬件自测/verify_e2e.sh` | 串口协议端到端验证（假底盘） |
+
+**验收层**（`tools/verify/`）—— 见[无硬件也能验](#无硬件也能验)。
+
+**排障层**（`tools/diag/`）
+
+| 文件 | 用途 |
+|---|---|
+| `fastdds_udp_only.xml` | 容器里 `/dev/shm` 不可用时强制 UDP，绕开 SHM 段创建失败 |
+| `auto_scan.py` | 自动走位 + 每点原地转一圈，比边走边转的建图质量高 |
 
 改完 shell 脚本建议跑一次 `audit_scripts.sh`。它检查两类 `bash -n` 查不出的问题：命令名与引号之间缺空格（语法合法、运行时才炸），以及管道退出码被 `tee`/`sed` 吞掉导致错误分支永不触发。
 
@@ -275,12 +286,46 @@ STM32 ──O 帧(11字段,50Hz)──▶ chassis_bridge ──▶ /odom + TF(od
 
 ### 无硬件也能验
 
-不必等硬件到货，`fake_chassis.py` 冒充 STM32，还能注入四类故障
-（死机、乱码、seq 停滞、零点漂移）：
+不必等硬件到货。`fake_chassis.py` 冒充 STM32，还能注入四类故障（死机、乱码、seq 停滞、零点漂移）：
 
 ```bash
-cd 无硬件自测 && ./verify_e2e.sh      # 10 项 e2e 判据，一条命令跑完
-python3 test_bridge_offline.py        # 无 pty 环境下的替代：mock 串口验桥本身
+./tools/verify/verify_e2e.sh         # 10 组 e2e 判据，一条命令跑完
+```
+
+链路：
+
+```
+fake_chassis.py ──写──> 虚拟串口 ──读──> chassis_bridge ──> /odom + TF + /joint_states
+ (假 STM32)
+```
+
+5 个脚本、共 2179 行：
+
+| 脚本 | 行数 | 验什么 |
+|---|---|---|
+| `verify_e2e.sh` | 646 | 10 组端到端判据：话题频率、TF 树、坐标系命名、故障注入、陈旧数据停发、install 新鲜度 |
+| `test_protocol.py` | 370 | 协议帧编解码与 CRC，44 项单测 |
+| `fake_chassis.py` | 385 | 假 STM32：按协议吐里程计帧、收速度帧 |
+| `crosscheck_bridge_functions.py` | 417 | 桥内纯函数 vs 参考实现逐值对拍（61 条，含物理锚点） |
+| `sim_integration_check.py` | 361 | 仿真侧集成检查 |
+
+**按环境选判据**（这一步容易踩空）：
+
+| 环境 | 用哪个 | 说明 |
+|---|---|---|
+| 普通 Ubuntu（有 `/dev/pts`） | `tools/verify/verify_e2e.sh` | 走真实虚拟串口，10 组全绿 |
+| 容器 / CI（无 pty） | `src/navbot_bridge/test/test_bridge_offline.py` | mock 串口驱动同一个节点，18 项全绿 |
+
+`verify_e2e.sh` 检测到没有 pty 时会自动降级到 TCP 回环并提示切到 offline 测试，不会静默假失败
+——**这是踩过坑之后加的**（容器里 `out of pty devices` 曾被误判成代码 bug）。
+
+本机实测（2026-10-29，无 pty 的沙箱）：
+
+```
+crosscheck_bridge_functions.py  →  61 通过 / 0 失败
+test_bridge_offline.py          →  18 通过 / 0 失败
+verify_e2e.sh                   →  16 通过 / 4 失败 / 3 跳过
+                                   4 项失败全在串口层，有 pty 的机器上不出现
 ```
 
 > 桥梁节点实测记录见 [`docs/S20_复盘_chassis_bridge实现.md`](docs/S20_复盘_chassis_bridge实现.md)：
@@ -302,6 +347,12 @@ python3 test_bridge_offline.py        # 无 pty 环境下的替代：mock 串口
 **`ament_lint_auto` 缺包**：`ros2 pkg create` 生成的 CMakeLists 默认 `find_package(ament_lint_auto REQUIRED)`，而 colcon build 默认 `BUILD_TESTING=ON`，不装它编译必挂。
 
 **`joint_state_publisher` 依赖降级**：它是运行时依赖，留在 `package.xml` 的 `<exec_depend>`，不要放进 `<depend>`。
+
+**`navbot_chassis` 只有骨架**：5 个 TODO 全空，`chassis_node` 能 build、能 spin，但没有业务逻辑。它存在的意义是给 C++ 版重写留容器，不是已交付功能。
+
+**G1 未达成**：`sim_all.launch.py` 不存在，仿真 + 导航要开三个终端，没有「一条命令 + 连发 5 点 + 5/5 到达」的复现记录。这是当前简历上最大的空洞。
+
+**实车雷达驱动未安装**：`rplidar_ros` / `sllidar_ros2` 都不在 `ros2 pkg list` 里，真机上雷达前必须先补。
 
 ## 相关文档
 

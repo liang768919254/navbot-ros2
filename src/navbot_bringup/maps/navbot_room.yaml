@@ -16,7 +16,7 @@
 #   ros2 node list | grep slam_toolbox
 #
 #   # 2) 存图（-f 后面是输出路径前缀，会生成 .pgm + .yaml 两个文件）
-#   cd ~/bridge/ros_study/src/navbot_bringup/maps
+#   cd ~/navbot_ws/src/navbot_bringup/maps
 #   ros2 run nav2_map_server map_saver_cli -f navbot_room
 #
 #   # 3) 确认生成
