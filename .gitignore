@@ -48,3 +48,8 @@ firmware/navbot_chassis/build/
 
 # ==== TF 树渲染产物（verify_e2e.sh 每次运行重新生成）====
 tools/verify/frames_*
+
+# ==== 仿真验收运行时产物（sim_fullchain 每次跑生成）====
+tools/verify/sim_fullchain/*.pid
+tools/verify/sim_fullchain/plan_probe.txt
+tools/verify/sim_fullchain/map_built.*
