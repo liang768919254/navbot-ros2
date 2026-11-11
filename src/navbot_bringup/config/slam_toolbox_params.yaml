@@ -34,6 +34,11 @@ slam_toolbox:
     #   ★ 这个值决定 CPU 负担。车走得慢可以设 0.5；走得快必须调小(0.2)，
     #     否则两帧之间位移太大，匹配会失败 → 地图糊成一团
 
+    # ★ 地图发布间隔。官方默认 5.0s，RViz 里地图半天不动，看着像卡死。
+    #   AGV 项目设 1.0s。这个参数只影响 /map 的发布频率，不参与优化，
+    #   所以不改变建图质量 —— 是从 AGV 项目里唯一可以安全采纳的一条。
+    map_update_interval: 1.0
+
     transform_timeout: 0.2
     tf_buffer_duration: 30.0  # ★ TF 缓存时长。设太小会在车快时丢变换
     stack_size_to_use: 40000000

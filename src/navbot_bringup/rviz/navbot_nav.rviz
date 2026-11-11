@@ -46,7 +46,12 @@ Visualization Manager:
         History Policy: Keep Last
         Reliability Policy: Reliable
         Value: /map
-      Alpha: 0.7
+      # ★★ 2026-11-10 改：0.7 → 1.0。
+      #    0.7 是当初为了让「地图别完全盖住代价图」才设的；
+      #    现在代价图默认关了、且垫在地图之下，地图就该是实心的。
+      #    半透明地图会让黑色墙体变成深灰，叠加背景色 48,48,48 后
+      #    对比度肉眼可见地掉一档 —— 这就是「导航版不清晰」的主因。
+      Alpha: 1.0
       Color Scheme: map
       Draw Behind: true
 
@@ -56,32 +61,42 @@ Visualization Manager:
     #   如果目标点周围一圈都是蓝紫色（膨胀区），就是 inflation 太大
     #   —— 本项目「窄通道」考点就靠这个面板看出来
     # ------------------------------------------------------------------
+    #
+    # ★★ 2026-11-10 改：默认【关闭】，Alpha 0.5 → 0.35，改为画在地图之下。
+    #    原来默认开启 + Alpha 0.5 + Draw Behind false，造成两个后果：
+    #      ① 每面墙两侧各糊一条 0.45 m 宽的蓝紫带（inflation 0.25 + cost_scaling 5.0），
+    #         视觉上「障碍物特别粗」，还盖住了真实墙体
+    #      ② 两层半透明叠加（/map 0.7 + costmap 0.5）让整屏发灰发糊，
+    #         对比建图版只有 /map 一层，所以建图版看着清爽得多
+    #    need_debug 时勾上即可（Nav2 的「过不去」问题还得靠它看）。
     - Class: rviz_default_plugins/Map
       Name: GlobalCostmap
-      Enabled: true
+      Enabled: false
       Topic:
         Depth: 1
         Durability Policy: Transient Local
         History Policy: Keep Last
         Reliability Policy: Reliable
         Value: /global_costmap/costmap
-      Alpha: 0.5
+      Alpha: 0.35
       Color Scheme: costmap
-      Draw Behind: false
+      Draw Behind: true
 
     # ★ 局部代价地图：滚动窗口，跟着车走
+    # ★ 同上：默认关闭。局部代价图是 3×3 m 滚动窗口，
+    #   一直开着会在车周围糊出一个大方块，比全局那份更挡视线。
     - Class: rviz_default_plugins/Map
       Name: LocalCostmap
-      Enabled: true
+      Enabled: false
       Topic:
         Depth: 1
         Durability Policy: Volatile
         History Policy: Keep Last
         Reliability Policy: Reliable
         Value: /local_costmap/costmap
-      Alpha: 0.5
+      Alpha: 0.35
       Color Scheme: costmap
-      Draw Behind: false
+      Draw Behind: true
 
     # ★★ 全局路径：规划器算出来的那条线。看到它 = 规划成功
     #   看不到它但发了目标 → 规划失败，去看 planner_server 的日志
@@ -141,8 +156,14 @@ Visualization Manager:
         History Policy: Keep Last
         Reliability Policy: Best Effort
         Value: /scan
+      # ★★ 2026-11-10 改：3 px → 5 px。
+      #    建图版是 3 px 绿色贴在黑墙上，对比度高所以锐利；
+      #    导航版红色 + 底下压着蓝紫代价带，红色 3 px 被吃掉大半。
+      #    代价图关掉后红色对比度本来就够了，这里再放大一点是为了一次到位。
+      #    ⚠️ 不要超过 7 px：TopDownOrtho Scale=150 时 1 px ≈ 6.7 mm，
+      #       5 px ≈ 3.4 cm，已经比墙厚（10 cm）的三分之一还小，再粗就开始糊墙。
       Style: Points
-      Size (Pixels): 3
+      Size (Pixels): 5
       Color Transformer: FlatColor
       Color: 255; 0; 0
       Decay Time: 0
@@ -196,7 +217,7 @@ Visualization Manager:
     Current:
       Class: rviz_default_plugins/TopDownOrtho
       Name: Current View
-      Scale: 60
+      Scale: 150
       Target Frame: <Fixed Frame>
       X: 0
       Y: 0
