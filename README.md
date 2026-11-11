@@ -40,7 +40,9 @@ Python 版是标准答案，C++ 版写完后用它逐字段对照，行为不一
 底盘参数在三个地方必须保持一致，改一个要同步另两个：
 
 - 轮距 0.16 m、轮半径 0.0325 m —— `navbot.xacro`
-- `robot_radius: 0.20` —— `nav2_params.yaml` 代价地图
+- `footprint` 矩形 0.30×0.24（±0.15, ±0.12）—— `nav2_params.yaml` 两处代价地图
+  ★ 用矩形而不是 `robot_radius: 0.20`：外接圆会把车算胖 7.2 cm，
+  在 0.655 m 的缝 S 里等于堵死 14.4 cm —— 详见 `docs/S32_从下面过不去.md`
 - `--wheel-sep` / `--wheel-radius` —— `fake_chassis.py`
 
 ## 目录结构
@@ -192,6 +194,7 @@ Gazebo 跟不上真实时间（RTF < 1），车按仿真时间走而截图按真
 |---|---|
 | `setup_env.sh` | 环境一键重建（装包、配源、编译），路径自动探测 |
 | `check_env.sh` | 3 秒体检，输出缺什么和对应命令；`--fix` 自动补 |
+| `check_hw.py` | 硬件勘察（只读）：板卡/CPU/内存/存储/温度/供电/USB/串口/总线/网络/WiFi/ROS 2，末尾给「上路就绪」判据；`--wifi-module` 走 AT 探测底盘 ESP8266；`--json -` 出机器可读 |
 | `check_sim.sh` | 仿真层四道门体检（spawn / 话题 / TF）；`--diag` 只读快照 |
 | `record_navigation.sh` | 无头环境录导航 GIF；`--diag` 现场诊断 |
 | `diag_ros_apt_key.sh` | apt 源与 GPG 密钥专项诊断 |
@@ -234,7 +237,9 @@ Gazebo 跟不上真实时间（RTF < 1），车按仿真时间走而截图按真
 
 | 项 | 值 | 说明 |
 |---|---|---|
-| `robot_radius` | 0.20 | 代价地图机器人半径，要大于车体半对角 |
+| `footprint` | `[[0.15,0.12],[0.15,-0.12],[-0.15,-0.12],[-0.15,0.12]]` | 车体矩形足迹，与 urdf `box size="0.30 0.24 0.06"` 一致 |
+| `inflation_radius` | 0.16 | = 车宽一半 0.12 + 4 cm 缓冲。**换 footprint 必须同步降这个值**，否则白换 |
+| ~~`robot_radius`~~ | — | 已删除。Nav2 里 `footprint` 与 `robot_radius` 互斥，同时写会静默取 footprint |
 | `max_vel_x` | 0.22 | 差速车不倒车，`min_vel_x` 为 0 |
 | `max_vel_theta` | 1.0 | 原地旋转角速度 |
 | `xy_goal_tolerance` | 0.15 | 位置容差 |
@@ -334,6 +339,56 @@ verify_e2e.sh                   →  16 通过 / 4 失败 / 3 跳过
 底盘固件在 [`firmware/navbot_chassis.c`](firmware/navbot_chassis.c)（骨架，25 个 TODO 未填；
 本项目走软件方向，固件不作要求）。
 
+### 导航控制器链（双层，参数全挂在 `FollowPath` 下）
+
+`controller_server` 的入口插件不是 DWB，而是 `RotationShimController`：
+
+```
+controller_server
+  └─ FollowPath : RotationShimController      ← 入口。controller_plugins 里写的就是这个名
+       └─ primary_controller: dwb_core::DWBLocalPlanner   ← 注意：这是【类名】
+```
+
+**为什么不能只用 DWB**：DWB 的四个 position critic（`PathAlign` / `PathDist` /
+`GoalAlign` / `GoalDist`）算的都是**轨迹末端点**到路径/目标的距离。原地转（v=0, w≠0）
+时末端点恒在车心 → 转左转右同分。而唯一管朝向的 `RotateToGoal` 在车距目标大于
+`xy_goal_tolerance` 时**直接 `return 0.0`**（源码如此）。结果就是「前方有墙要转身」
+时 DWB 算不出该往哪转，最优解是 **v=0 停住**。
+
+> 完整推导见 [`docs/S28_原地转向时DWB瞎了.md`](docs/S28_原地转向时DWB瞎了.md)，
+> 以及踩坑记录 [`docs/S29_检查脚本全绿仿真却起不来.md`](docs/S29_检查脚本全绿仿真却起不来.md)。
+
+**三条硬规则**（写错不报错，运行时才崩）：
+
+| 规则 | 写错的后果 |
+|---|---|
+| `primary_controller` 填**插件类名** `"dwb_core::DWBLocalPlanner"` | 填参数块名 → `[FATAL] class ... does not exist`，随后 **SIGSEGV，动作服务端消失，客户端收到 `NOT_ACCEPTED`** |
+| 内层参数写在 **`FollowPath:`** 下，不要另开块 | 另开 `FollowPathDWB:` → **不报错**，DWB 静默用默认值（`max_vel_x` 0.26）跑飞 |
+| `progress_checker.movement_time_allowance >= 15 s` | `SimpleProgressChecker` 只看**位移**，原地转位移恒 0，10 s 会被反复判「没进展」 |
+
+源码依据：
+
+```cpp
+primary_controller = node->get_parameter(plugin_name_ + ".primary_controller").as_string();
+primary_controller_ = lp_loader_.createUniqueInstance(primary_controller);  // 按【类名】
+primary_controller_->configure(parent, name, tf, costmap_ros);              // name = 外层 plugin_name
+```
+
+改完控制器链先跑离线闸门（约 5 秒，不需要 ROS 在跑）：
+
+```bash
+python3 tools/verify/check_controller.py   # 11 项，应全通
+python3 tools/verify/check_limits.py       # 7 项，应全通
+python3 tools/verify/inject_faults.py      # 6 种故障注入，应全部被抓到
+```
+
+`live.sh nav` 启动仿真前会自动跑这三个，不过就拦下并提示（`[0/3] 参数闸门`）。
+
+> **为什么要跑故障注入**：`check_controller.py` 第一版的判据是「yaml 里有没有这个
+> 参数块」——而块名是我自己起的，永远查得到，于是错的配置被放行。现在改成
+> `strings` 扫 `.so` 抠出 pluginlib 真实类名来比对，**问系统，不问自己**。
+> 注入测试就是用来证明这套判据真的还会红。
+
 ## 已知问题
 
 **Gazebo 版本**：Humble 对应 Gazebo Classic 11，包名 `gazebo`。不要装 `ros-humble-ros-gz`（那是新版的桥接包），URDF 里的 `<gazebo>` 标签会找不到插件。
@@ -354,6 +409,11 @@ verify_e2e.sh                   →  16 通过 / 4 失败 / 3 跳过
 
 **实车雷达驱动未安装**：`rplidar_ros` / `sllidar_ros2` 都不在 `ros2 pkg list` 里，真机上雷达前必须先补。
 
+**底盘 ESP8266 读不到状态**：ESP 焊在 PCB 上，F103C8T6 的 USART1 给了 USB-TTL、USART3 给了雷达，
+剩下的 USART2 固件里没初始化，全工程也没有 AT 代码。所以 `--wifi-module` 只能探到「ESP 直连
+USB-TTL」那种接线；走 STM32 转发需要先做 AT 透传。确认步骤与透传方案见
+[`docs/H1`](docs/H1_ESP8266接线确认与AT透传方案.md)。
+
 ## 相关文档
 
 | 文档 | 内容 |
@@ -364,5 +424,8 @@ verify_e2e.sh                   →  16 通过 / 4 失败 / 3 跳过
 | [00 环境一键安装](docs/00_环境一键安装文档.md) | 环境配置与踩坑 |
 | [A5 知识概念全解](docs/A5_知识概念全解.md) | 概念答疑 |
 | [G1 Git 推送步骤](docs/G1_Git推送到GitHub详细步骤.md) | 推到 GitHub |
+| [H1 ESP8266 接线与 AT 透传](docs/H1_ESP8266接线确认与AT透传方案.md) | 底盘 WiFi 模块怎么确认接线、要不要动固件 |
+| [H2 雷达链路联调结论](docs/H2_雷达链路联调结论.md) | 雷达为什么没数据：三层排查定位到雷达侧 |
+| [H3 室内建图导航落地路线](docs/H3_室内建图导航落地路线.md) | 从当前现状到建图定位避障的最短路径，四阶段带验收判据 |
 
 环境层的问题基本都沉淀在 `setup_env.sh` 文件头和 `docs/00_环境一键安装文档.md` 的「常见坑」章节。

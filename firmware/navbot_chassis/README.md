@@ -1,7 +1,9 @@
-# navbot_chassis —— STM32 底盘固件「骨架版」
+# navbot_chassis —— STM32 底盘固件
 
 > 对应 P3 项目（ROS2 自主导航移动机器人）真机路线的 **S19 固件**。
-> 这是**骨架，不是成品**：核心逻辑 25 个 TODO 留空，等你填（铁律：只给需求+判据，不给成品）。
+> ✅ **代码已填完 + 编译通过**（2026-11-03 实测：Flash 18KB / RAM 2.2KB，`-Wall` 零警告）。
+> 剩余工作 = 烧录 + 真机跑验收判据（见 main.c 顶部 A1-A4 / B1-B3 / C1-C2 / D1-D4）。
+> 编译：`make -j$(nproc)`，产物 `build/navbot_chassis.hex` + `.bin`。
 
 ---
 
