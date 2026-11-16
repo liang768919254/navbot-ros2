@@ -2,6 +2,13 @@
 
 基于 ROS2 Humble + Nav2 + slam_toolbox 的两轮差速小车导航项目。仿真跑 Gazebo Classic 11，真机接 STM32 底盘，URDF 模型两边复用。
 
+两张仿真地图，用途不同：
+
+| 地图 | 尺寸 | 用来看什么 |
+|---|---|---|
+| `navbot_room` | 6 × 5 m，1 房间 + 2 段隔断 | 单个机制：窄缝（0.655 m）、原地转、膨胀参数 |
+| `navbot_house` | 15.2 × 10.7 m，5 房间 + 成环走廊 | 复杂路径：跨房间、绕远 vs 抄近、门洞通过 |
+
 
 ![Nav2 自主导航演示](docs/navigation_demo.gif)
 
@@ -13,8 +20,9 @@
 
 - [系统组成](#系统组成)
 - [目录结构](#目录结构)
-- [环境准备](#环境准备)
+- **环境准备**
 - [仿真流程](#仿真流程)
+- [复杂地图](#复杂地图navbot_house)
 - [脚本](#脚本)
 - [配置说明](#配置说明)
 - [真机路线](#真机路线)
@@ -30,7 +38,7 @@
 | `navbot_description` | URDF/xacro 模型，关节树、惯量、雷达支架 | 完成（7 link + 5 惯性宏） |
 | `navbot_bringup` | launch 文件、Nav2 与 slam_toolbox 参数、Gazebo 世界、地图 | 完成 |
 | `navbot_bridge` | 串口 ↔ ROS 话题桥接（Python 参照实现，448 行） | 完成，36 项测试 |
-| `navbot_chassis` | **C++ 版同一节点**（rclcpp） | **骨架，5 个 TODO 未填** |
+| `navbot_chassis` | **C++ 版同一节点**（rclcpp） | **骨架，6 个 TODO 未填** |
 
 `navbot_bridge` 与 `navbot_chassis` 是**同一个节点的两种实现**，同时存在是故意的：
 Python 版是标准答案，C++ 版写完后用它逐字段对照，行为不一致就是 C++ 版错了。
@@ -59,13 +67,17 @@ Python 版是标准答案，C++ 版写完后用它逐字段对照，行为不一
 │   │   └── rviz/navbot_check.rviz
 │   ├── navbot_bringup/             启动与配置
 │   │   ├── launch/
-│   │   │   ├── sim_navbot.launch.py     只起仿真，不含 Nav2
+│   │   │   ├── sim_navbot.launch.py     只起仿真，不含 Nav2（x/y/yaw 可换出生点）
 │   │   │   ├── slam_mapping.launch.py   建图
 │   │   │   └── nav_bringup.launch.py    定位 + 导航
-│   │   ├── config/{nav2_params,slam_toolbox_params}.yaml
-│   │   ├── maps/navbot_room.{pgm,yaml}  地图（pgm 由 map_saver 生成）
-│   │   ├── worlds/navbot_room.world     Gazebo 世界
-│   │   └── rviz/navbot_{nav,slam}.rviz
+│   │   ├── config/nav2_params.yaml        房间用（基线）
+│   │   ├── config/nav2_params_house.yaml  房子用（inflation 0.32 + SMAC cp=120）
+│   │   ├── config/slam_toolbox_params.yaml
+│   │   ├── maps/navbot_room.{pgm,yaml}  房间地图（pgm 由 map_saver 生成）
+│   │   ├── maps/navbot_house.{pgm,yaml} 房子地图（几何真值图，world_to_map.py 直出）
+│   │   ├── worlds/navbot_room.world     Gazebo 世界（自建小房间）
+│   │   ├── worlds/navbot_house.world    Gazebo 世界（TurtleBot3 官方 5 房间，已内联）
+│   │   └── rviz/navbot_{nav,slam}.rviz  RViz 视图
 │   ├── navbot_bridge/              串口桥接（Python 参照实现）
 │   │   ├── navbot_bridge/chassis_bridge.py   O 帧 → /odom+TF+/joint_states；/cmd_vel → V 帧
 │   │   ├── config/bridge_params.yaml         真机串口参数
@@ -73,15 +85,24 @@ Python 版是标准答案，C++ 版写完后用它逐字段对照，行为不一
 │   └── navbot_chassis/             C++ 版同一节点（rclcpp，骨架）
 │       └── src/chassis_node.cpp
 ├── tools/                          不需要 ROS 技能树也能跑的工具
-│   ├── verify/                     无硬件验收体系（5 脚本 / 2179 行）
+│   ├── verify/                     无硬件验收体系（12 脚本 / 4748 行）
 │   │   ├── verify_e2e.sh              端到端 10 组判据
 │   │   ├── fake_chassis.py            假底盘，可注入四类故障
 │   │   ├── test_protocol.py           协议与运动学单测（44 项）
 │   │   ├── crosscheck_bridge_functions.py  桥内纯函数逐值对拍（61 条）
-│   │   └── sim_integration_check.py   仿真侧集成检查
+│   │   ├── sim_integration_check.py   仿真侧集成检查
+│   │   ├── check_controller.py        控制器链离线闸门（11 项）
+│   │   ├── check_limits.py            安全阈值闸门（7 项）
+│   │   ├── inject_faults.py           闸门自证：6 种坏配置必须被抓到
+│   │   ├── world_to_map.py            ★ SDF 世界 → Nav2 占据栅格地图（真值图）
+│   │   ├── path_select.py             ★ 多规划器算同一批路径并打分（规划层筛选）
+│   │   ├── nav_route.py               ★ 按 JSON 路线逐点导航，记录耗时/误差
+│   │   ├── routes_house.json          房子图的 6 点巡检路线
+│   │   └── sim_fullchain/             实时联调工具（live.sh / nav_patrol / 扫码建图，38 文件）
 │   ├── env/                        环境层
 │   │   ├── setup_env.sh               一键重建（幂等，15~25 min）
 │   │   ├── check_env.sh               环境体检
+│   │   ├── check_hw.py                硬件勘察（只读）
 │   │   ├── check_sim.sh               仿真四道门体检
 │   │   ├── record_navigation.sh       无头环境录导航 GIF
 │   │   ├── diag_ros_apt_key.sh        apt 源与密钥专项诊断
@@ -90,9 +111,9 @@ Python 版是标准答案，C++ 版写完后用它逐字段对照，行为不一
 │       ├── fastdds_udp_only.xml       容器里绕开 SHM，强制 UDP
 │       └── auto_scan.py               自动走位 + 全向扫描
 ├── firmware/                       真机
-│   ├── navbot_chassis/             STM32 底盘固件（CubeMX 工程，25 个 TODO 未填）
+│   ├── navbot_chassis/             STM32 底盘固件（CubeMX 工程，19 个 TODO 未填）
 │   └── navbot_protocol.md          通信协议 v1（改代码前先看这份）
-├── docs/                           14 份文档 + 演示动图
+├── docs/                           28 份文档 + 演示动图 + 仿真截图
 └── README.md
 ```
 
@@ -184,6 +205,113 @@ bash record_navigation.sh square    # 走方形路线成环，输出 navigation.
 ```
 Gazebo 跟不上真实时间（RTF < 1），车按仿真时间走而截图按真实时间拍，整段导航在墙上要花几分钟。脚本用「跑完为止」模式而非固定帧数。
 
+## 复杂地图：navbot_house
+
+房间图（6×5 m）适合调单个机制，但**没有「两条路可选」的场合** —— 全局路径怎么走几乎没得挑，
+规划器好坏看不出来。房子图（15.2×10.7 m、5 房间、成环走廊、门洞 0.8~1.0 m）才有这个空间。
+
+场景取自 TurtleBot3 官方 `turtlebot3_house`，几何体（194 个 box）**内联进 world 文件**，
+不依赖 `GAZEBO_MODEL_PATH`，拷到任何机器上都能直接开。
+
+### 出生点必须跟着地图换
+
+房子在 (0,0) 是走廊正中，离墙只有 0.20 m 净空 —— 一出生就贴墙。实际用 (-1.0,-1.6)（净空 1.30 m）：
+
+```bash
+ros2 launch navbot_bringup sim_navbot.launch.py gui:=false \
+  world:=$(ros2 pkg prefix navbot_bringup)/share/navbot_bringup/worlds/navbot_house.world \
+  x:=-1.0 y:=-1.6 yaw:=0.0
+
+ros2 launch navbot_bringup nav_bringup.launch.py use_sim_time:=true \
+  map:=$(ros2 pkg prefix navbot_bringup)/share/navbot_bringup/maps/navbot_house.yaml
+
+python3 tools/verify/sim_fullchain/set_pose.py --auto   # 给 AMCL 初值（注入后自检）
+```
+
+### 房子地图是「几何真值图」，不是 SLAM 图
+
+`tools/verify/world_to_map.py` 按激光平面（`--z 0.12`）切一刀，把世界里的 box 栅格化：
+
+```bash
+python3 tools/verify/world_to_map.py \
+  --world src/navbot_bringup/worlds/navbot_house.world \
+  --z 0.12 --seed -1.0 -1.6 --out src/navbot_bringup/maps/navbot_house
+```
+
+```
+栅格：328 × 239 格（16.4 m × 12.0 m），切片内图元 56 个
+原点 (-8.175, -5.950)  分辨率 0.050  自由 151.0 m²  占据 4462 格  未知 17%
+```
+
+**为什么不用 SLAM 建这张图**：150 m² 靠 `auto_scan` 走一圈要十几分钟且无头环境没法确认漏扫；
+几何真值图零噪声，能把「地图误差」这个变量从对比实验里彻底消掉。
+真机只能靠 SLAM，这条路线不替代建图流程 —— 它是**做导航算法对比时的标尺**。
+
+### 路径自动筛选
+
+`tools/verify/path_select.py` 让三个规划器（NavFn / Smac2D / SmacHybrid）对同一批起终点各算一遍，
+量长度、最小净空、转角数、平均软代价、耗时，加权打分后给结论。**不驱动车，10 秒出结果**：
+
+```bash
+python3 tools/verify/path_select.py --route-file tools/verify/routes_house.json \
+        --json /tmp/select.json --png /tmp/paths.png    # --png：三条路径叠在地图上
+```
+
+房子图实测（6 个跨房间目标，全部规划成功）：
+
+| planner_id | 实际插件 | 平均长度 | 最小净空 | 平均耗时 |
+|---|---|---|---|---|
+| `GridBased` | **SmacPlanner2D**（cost_penalty 30，smooth 关） | 9.14 m | 0.28 m | 13 ms |
+| `NavFn` | NavfnPlanner（原 `GridBased`） | 8.79 m | 0.34 m | 13 ms |
+| `SmacHybrid` | SmacPlannerHybrid | 8.76 m | 0.14 m | 9 ms |
+
+两条反直觉的结论：
+
+1. 长度差 <5%、耗时都在 10 ms —— **这张图上「选路」在规划层几乎筛不出差别**，
+   门洞是瓶颈，三个规划器都被约束到同一条主通道上。
+2. NavFn 的最小净空（0.34）比 SMAC（0.28）还大，但**它规划失败的次数更多**
+   （G4/G5/G6 直接 `failed to create plan`），所以默认最后落在 SMAC 上。
+
+> ★ 换规划器的坑：**Humble 默认行为树里 `planner_id` 写死是 `"GridBased"`**，
+> 改 `planner_plugins` 的顺序不会改变它用谁。要让 SMAC 当默认，只能把它挂到
+> `GridBased` 这个名字下 —— 这也是上表第一行看起来"名不副实"的原因。
+
+真正决定成败的是执行层，详见 [`docs/S35_复杂地图与路径筛选.md`](docs/S35_复杂地图与路径筛选.md)。
+
+### 逐点巡检
+
+```bash
+python3 tools/verify/nav_route.py --route-file tools/verify/routes_house.json \
+        --json /tmp/route.json
+```
+
+输出每点的结果 / 墙钟 / 仿真时长 / 终点误差 + PASS-FAIL，判据 `SUCCEEDED + 误差 < 0.30 m`。
+路线写在 JSON 里，换地图只换文件。
+
+**当前状态（2026-11-16 实测）：房子图 6 个跨房间目标 6/6 全通。**
+
+```
+G1 左下房   PASS  48.4s  误差 0.105m      G4 右上房   PASS  48.0s  误差 0.080m
+G2 左上房   PASS  35.6s  误差 0.088m      G5 右下房   PASS 276.9s  误差 0.147m
+G3 中上大厅 PASS  20.9s  误差 0.122m      G6 中下大厅 PASS  61.3s  误差 0.126m
+
+合计 6 点，PASS 6，FAIL 0   总墙钟 491.0 s   终点误差 最大 0.147 / 平均 0.111 m
+```
+
+★ **房子要单独一份参数文件**（`config/nav2_params_house.yaml`）：
+
+```bash
+ros2 launch navbot_bringup nav_bringup.launch.py use_sim_time:=true \
+  map:=$(ros2 pkg prefix navbot_bringup)/share/navbot_bringup/maps/navbot_house.yaml \
+  params_file:=$(ros2 pkg prefix navbot_bringup)/share/navbot_bringup/config/nav2_params_house.yaml
+```
+
+原因：**两张图对 `inflation_radius` 的要求互相矛盾** —— 房间的 0.655 m 缝要求 ≤0.32，
+房子的墙角要求 ≥0.32，最终只有「0.32 + Smac `cost_penalty` 120」这一组能跑通房子，
+而那组会把房间的缝压到 0.015 m。逐项差异写在那个文件头部。
+完整推导（五个坑、每步的实测数据）见
+[S35](docs/S35_复杂地图与路径筛选.md)。
+
 ## 脚本
 
 全部在 `tools/` 下，分三类。
@@ -202,6 +330,13 @@ Gazebo 跟不上真实时间（RTF < 1），车按仿真时间走而截图按真
 
 **验收层**（`tools/verify/`）—— 见[无硬件也能验](#无硬件也能验)。
 
+| 脚本 | 用途 |
+|---|---|
+| `path_select.py` | 多规划器路径打分筛选（规划层，不下发速度） |
+| `nav_route.py` | 按 JSON 路线逐点导航，记录耗时与终点误差 |
+| `world_to_map.py` | SDF 世界 → Nav2 占据栅格地图（几何真值图） |
+| `routes_house.json` | 房子图的 6 点巡检路线 |
+
 **排障层**（`tools/diag/`）
 
 | 文件 | 用途 |
@@ -219,7 +354,8 @@ Gazebo 跟不上真实时间（RTF < 1），车按仿真时间走而截图按真
 |---|---|---|---|
 | `sim_navbot` | `gui` | `true` | 无头环境设 `false` |
 | | `use_sim_time` | `true` | 仿真必须 true |
-| | `world` | `navbot_room.world` | Gazebo 世界 |
+| | `world` | `navbot_room.world` | Gazebo 世界（换房子传 `navbot_house.world`） |
+| | `x` / `y` / `yaw` | `0` / `0` / `0` | 出生点。换大地图必须改，出生点要落在地图 free 格上 |
 | `slam_mapping` | `use_sim_time` | `true` | |
 | | `use_rviz` | `true` | |
 | | `slam_params_file` | `slam_toolbox_params.yaml` | |
@@ -304,15 +440,22 @@ fake_chassis.py ──写──> 虚拟串口 ──读──> chassis_bridge �
  (假 STM32)
 ```
 
-5 个脚本、共 2179 行：
+`tools/verify/` 顶层 12 个脚本、共 4748 行；`tools/verify/sim_fullchain/` 另有 38 个实时联调工具（9688 行）：
 
 | 脚本 | 行数 | 验什么 |
 |---|---|---|
-| `verify_e2e.sh` | 646 | 10 组端到端判据：话题频率、TF 树、坐标系命名、故障注入、陈旧数据停发、install 新鲜度 |
+| `verify_e2e.sh` | 655 | 10 组端到端判据：话题频率、TF 树、坐标系命名、故障注入、陈旧数据停发、install 新鲜度 |
 | `test_protocol.py` | 370 | 协议帧编解码与 CRC，44 项单测 |
 | `fake_chassis.py` | 385 | 假 STM32：按协议吐里程计帧、收速度帧 |
-| `crosscheck_bridge_functions.py` | 417 | 桥内纯函数 vs 参考实现逐值对拍（61 条，含物理锚点） |
+| `crosscheck_bridge_functions.py` | 436 | 桥内纯函数 vs 参考实现逐值对拍（61 条，含物理锚点） |
 | `sim_integration_check.py` | 361 | 仿真侧集成检查 |
+| `check_controller.py` | 404 | 控制器链闸门：`strings` 扫 `.so` 抠 pluginlib 真实类名来比对 |
+| `check_limits.py` | 308 | 安全阈值闸门：足迹/膨胀/速度/容差的一致性 |
+| `inject_faults.py` | 186 | 闸门自证：6 种坏配置必须被上面两个抓到 |
+| `path_select.py` | 506 | 多规划器打分筛选（规划层） |
+| `nav_route.py` | 179 | 逐点导航 + 计时 + 终点误差 |
+| `world_to_map.py` | 417 | SDF → 占据栅格（几何真值图） |
+| `test_esp_at_probe.py` | 541 | ESP8266 AT 探测的离线单测 |
 
 **按环境选判据**（这一步容易踩空）：
 
@@ -336,7 +479,7 @@ verify_e2e.sh                   →  16 通过 / 4 失败 / 3 跳过
 > 桥梁节点实测记录见 [`docs/S20_复盘_chassis_bridge实现.md`](docs/S20_复盘_chassis_bridge实现.md)：
 > `/odom` 49.923 Hz、乱码注入后进程存活且日志仅 2 行、`verify_e2e.sh` 通过 21 / 失败 0。
 
-底盘固件在 [`firmware/navbot_chassis.c`](firmware/navbot_chassis.c)（骨架，25 个 TODO 未填；
+底盘固件在 [`firmware/navbot_chassis.c`](firmware/navbot_chassis.c)（骨架，19 个 TODO 未填；
 本项目走软件方向，固件不作要求）。
 
 ### 导航控制器链（双层，参数全挂在 `FollowPath` 下）
@@ -403,9 +546,36 @@ python3 tools/verify/inject_faults.py      # 6 种故障注入，应全部被抓
 
 **`joint_state_publisher` 依赖降级**：它是运行时依赖，留在 `package.xml` 的 `<exec_depend>`，不要放进 `<depend>`。
 
-**`navbot_chassis` 只有骨架**：5 个 TODO 全空，`chassis_node` 能 build、能 spin，但没有业务逻辑。它存在的意义是给 C++ 版重写留容器，不是已交付功能。
+**`navbot_chassis` 只有骨架**：6 个 TODO 全空，`chassis_node` 能 build、能 spin，但没有业务逻辑。它存在的意义是给 C++ 版重写留容器，不是已交付功能。
 
-**G1 未达成**：`sim_all.launch.py` 不存在，仿真 + 导航要开三个终端，没有「一条命令 + 连发 5 点 + 5/5 到达」的复现记录。这是当前简历上最大的空洞。
+**★ 换仿真世界时不要照抄它的 physics 块**（2026-11-16 实测）：`navbot_house.world` 最初
+照搬了 TurtleBot3 官方的 ODE 配置，其中 `contact_surface_layer = 1 cm` 对 navbot
+半径 3.25 cm 的轮子来说太软 —— **轮子在转、车不动**：命令 0.15 m/s，真值只走 0.021 m/s（打滑 7 倍）。
+表现是 Nav2 每 25 s 判一次「Failed to make progress」，6 个目标点全部超时，
+而地图、激光、代价图全部正常（该点 ±0.6 m 全 free）。
+判据很便宜：`/joint_states` 的轮速 vs `gz model -m navbot -p` 的真值位移，对不上就是打滑。
+现在这个世界用的是与 `navbot_room.world` 一致的默认 ODE 配置。细节见
+[`docs/S35`](docs/S35_复杂地图与路径筛选.md)。
+
+**★ 万向球不给 `<mu1>/<mu2>` 就等于 mu=1.0**（2026-11-16 实测）：`navbot.xacro` 里两个
+`caster` 是球（r=0.015），不写摩擦时 Gazebo 用默认 1.0 —— 球在地上"蹭"而不是滚。
+表现：命令 0.6 rad/s，真值 5 秒只转 0.11 rad（**18%**），DWB 以为在转、车没转，
+一到墙角/门口就原地小幅摆，永远转不过去。已在 `navbot.gazebo.xacro` 里给
+`front_caster_link` / `back_caster_link` 设 `mu=0.01`（真机是滚珠，横向摩擦本来就极小）。
+修完同一条命令 5 秒转 3.0 rad。**这条是 S28「原地转向时 DWB 瞎了」的另一半病因。**
+
+**★ 换默认规划器改 `planner_plugins` 顺序没用**：Humble 默认行为树的
+`ComputePathToPose` 里 `planner_id` 写死是 `"GridBased"`，按**名字**取插件。
+要让 SMAC 当默认，得把它挂到 `GridBased` 这个名字下（见 `config/nav2_params.yaml`）。
+
+**★ 房子的几何真值图缺 4 个 mesh 碰撞体**（信箱、两个垃圾桶、桌面）：
+`world_to_map.py` 只处理 box/cylinder/sphere。这 4 个在 Gazebo 里挡激光、在地图里不存在，
+全局代价地图的 `obstacle_layer` 会看到它们而静态层没有 ⇒ 全局可能规划穿过去。
+要么把 mesh 的 AABB 也栅格化，要么改用 SLAM 实建图。
+
+**G1 部分达成**：`sim_all.launch.py` 仍然不存在（仿真 + 导航要开两个终端）。但「连发多点 + 逐点复现记录」已经有了：
+`tools/verify/nav_route.py` + `routes_house.json`，房间图上是 8/8（S31 记录），
+房子图上 **6 点还没跑出 6/6**（原因见 S35 第 4 节）。这是当前简历上最大的空洞。
 
 **实车雷达驱动未安装**：`rplidar_ros` / `sllidar_ros2` 都不在 `ros2 pkg list` 里，真机上雷达前必须先补。
 
@@ -427,5 +597,6 @@ USB-TTL」那种接线；走 STM32 转发需要先做 AT 透传。确认步骤�
 | [H1 ESP8266 接线与 AT 透传](docs/H1_ESP8266接线确认与AT透传方案.md) | 底盘 WiFi 模块怎么确认接线、要不要动固件 |
 | [H2 雷达链路联调结论](docs/H2_雷达链路联调结论.md) | 雷达为什么没数据：三层排查定位到雷达侧 |
 | [H3 室内建图导航落地路线](docs/H3_室内建图导航落地路线.md) | 从当前现状到建图定位避障的最短路径，四阶段带验收判据 |
+| [S35 复杂地图与路径筛选](docs/S35_复杂地图与路径筛选.md) | 5 房间场景接入、三规划器打分对比、执行层卡死的根因（physics 打滑） |
 
 环境层的问题基本都沉淀在 `setup_env.sh` 文件头和 `docs/00_环境一键安装文档.md` 的「常见坑」章节。

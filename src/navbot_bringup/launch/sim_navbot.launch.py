@@ -8,6 +8,12 @@
   ros2 topic hz /scan    # 约 10 Hz
   ros2 topic hz /odom    # 约 50 Hz
 
+换复杂地图（房子）时出生点也要换，三个参数在启动时给：
+
+  ros2 launch navbot_bringup sim_navbot.launch.py gui:=false \
+      world:=$(ros2 pkg prefix navbot_bringup)/share/navbot_bringup/worlds/navbot_house.world \
+      x:=-2.0 y:=-0.5 yaw:=0.0
+
 Gazebo 是 Classic 11（gazebo 命令），不是新版 gz sim，
 两者 launch 写法完全不同，这个文件是 Classic 版。
 """
@@ -50,6 +56,13 @@ def generate_launch_description():
     world_arg = DeclareLaunchArgument(
         'world', default_value=world_file, description='Gazebo 世界文件路径'
     )
+    # ★ 2026-11-16 新增：出生点参数化。
+    #   换地图（navbot_room → navbot_house）时车不能都生在 (0,0)：
+    #   房子在 (0,0) 是走廊正中，而 house 地图的洪泛种子在 (-2.0,-0.5)。
+    #   出生点必须落在地图 free 格里，否则 AMCL 一开始就没有合法位姿。
+    x_arg = DeclareLaunchArgument('x', default_value='0.0', description='出生点 x（米）')
+    y_arg = DeclareLaunchArgument('y', default_value='0.0', description='出生点 y（米）')
+    yaw_arg = DeclareLaunchArgument('yaw', default_value='0.0', description='出生朝向（弧度）')
 
     # value_type=str 不能省，否则 Command 的输出被当成 YAML 解析
     robot_description = ParameterValue(
@@ -107,7 +120,10 @@ def generate_launch_description():
                     '-topic', 'robot_description',
                     '-entity', 'navbot',
                     # 出生点：抬高 0.05 避免和地面穿插被弹飞
-                    '-x', '0.0', '-y', '0.0', '-z', '0.05',
+                    '-x', LaunchConfiguration('x'),
+                    '-y', LaunchConfiguration('y'),
+                    '-z', '0.05',
+                    '-Y', LaunchConfiguration('yaw'),
                 ],
             )
         ],
@@ -117,6 +133,9 @@ def generate_launch_description():
         gui_arg,
         use_sim_time_arg,
         world_arg,
+        x_arg,
+        y_arg,
+        yaw_arg,
         gazebo,
         robot_state_publisher_node,
         spawn_entity_node,

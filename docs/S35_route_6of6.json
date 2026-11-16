@@ -1,0 +1,75 @@
+{
+ "tag": "house_final",
+ "route": "tools/verify/routes_house.json",
+ "tol_err": 0.3,
+ "rows": [
+  {
+   "state": "SUCCEEDED",
+   "t": 48.437994718551636,
+   "t_sim": 1286.0,
+   "err": 0.1052800523775782,
+   "detail": "status=4",
+   "name": "G1_左下房",
+   "x": -6.5,
+   "y": -3.0,
+   "pass": true
+  },
+  {
+   "state": "SUCCEEDED",
+   "t": 35.611467361450195,
+   "t_sim": 35.5,
+   "err": 0.08829907935697077,
+   "detail": "status=4",
+   "name": "G2_左上房",
+   "x": -6.0,
+   "y": 3.5,
+   "pass": true
+  },
+  {
+   "state": "SUCCEEDED",
+   "t": 20.8614239692688,
+   "t_sim": 20.8,
+   "err": 0.12209370478602184,
+   "detail": "status=4",
+   "name": "G3_中上大厅",
+   "x": -2.0,
+   "y": 3.2,
+   "pass": true
+  },
+  {
+   "state": "SUCCEEDED",
+   "t": 47.96140503883362,
+   "t_sim": 47.8,
+   "err": 0.07967355252067394,
+   "detail": "status=4",
+   "name": "G4_右上房",
+   "x": 4.0,
+   "y": 3.5,
+   "pass": true
+  },
+  {
+   "state": "SUCCEEDED",
+   "t": 276.8515872955322,
+   "t_sim": 275.9,
+   "err": 0.14671587267440153,
+   "detail": "status=4",
+   "name": "G5_右下房",
+   "x": 5.5,
+   "y": -3.5,
+   "pass": true
+  },
+  {
+   "state": "SUCCEEDED",
+   "t": 61.31156039237976,
+   "t_sim": 61.1,
+   "err": 0.12581441380165204,
+   "detail": "status=4",
+   "name": "G6_中下大厅",
+   "x": 0.5,
+   "y": -2.5,
+   "pass": true
+  }
+ ],
+ "pass": 6,
+ "total": 6
+}

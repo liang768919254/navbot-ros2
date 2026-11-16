@@ -1567,3 +1567,65 @@ Nav2 侧交叉验证：`grep -c "Goal succeeded"` = **16**，
    在失败前 4 秒就打印了，当时只盯着 `NOT_ACCEPTED`。
 5. **算出来的指标会骗人。** `2.03 m / 240.5 s = 0.008 m/s` 看着像爬行，
    实际分母是超时上限。指标必须附「来源」，是实测还是推导。
+
+---
+
+## S35 复杂地图：房子图 6 点路线从 0/6 到 6/6（2026-11-16）
+
+> 完整复盘：`docs/S35_复杂地图与路径筛选.md`；实测记录：`docs/S35_route_6of6.json`。
+
+房间里 8/8 的同一套栈，换到 TurtleBot3 官方 5 房间场景（15.2×10.7 m、194 个 box）后 **0/6**。
+逐个拔掉五个根因后 **6/6**：
+
+```
+G1 左下房   PASS  48.4s  0.105m      G4 右上房   PASS  48.0s  0.080m
+G2 左上房   PASS  35.6s  0.088m      G5 右下房   PASS 276.9s  0.147m
+G3 中上大厅 PASS  20.9s  0.122m      G6 中下大厅 PASS  61.3s  0.126m
+
+合计 6/6，总墙钟 491.0 s，终点误差 最大 0.147 / 平均 0.111 m
+```
+
+### 五个坑（四个不在 Nav2 参数上）
+
+| # | 坑 | 量出来的证据 | 修法 |
+|---|---|---|---|
+| 1 | 世界 physics 照抄 TB3，`contact_surface_layer=1 cm` | 命令 0.15 m/s 只走 **0.021**（打滑 7 倍）；换回默认 ODE 后 0.10~0.28 | 用与房间一致的默认 ODE |
+| 2 | 万向球没写 `<mu1>/<mu2>`，默认 mu=1.0 | 原地转 0.6 rad/s，5 s 只转 **0.11 rad（18%）** | caster 设 `mu=0.01`，同命令转 3.0 rad |
+| 3 | 4 cm 桌腿在地图上整根消失（格心判据） | 全局穿桌、局部堵死；修后该点 254→0 | `world_to_map.py` 保守栅格化（半格外扩） |
+| 4 | 改 `planner_plugins` 顺序无效 | 日志仍是 `Planning algorithm **GridBased** failed` | Humble BT 写死 `planner_id="GridBased"`，只能把 SMAC 挂这个名下 |
+| 5 | 一张图一个 `inflation_radius` 满足不了两种门 | 0.32 封死 0.7 m 门（6 cm 带）；0.24 墙角净空不足 | **0.32 + `cost_penalty 120`** |
+
+> 坑 2 顺带解释了 S28「原地转向时 DWB 瞎了」的另一半：当时只治了「选方向」，没查「转不动」。
+
+### 参数必须分文件
+
+房子这套会把房间 0.655 m 的缝压到 0.015 m（S32 的死法），所以：
+
+| 文件 | 用途 | 关键差异 |
+|---|---|---|
+| `config/nav2_params.yaml` | 房间（默认，git 原样） | inflation 0.16 / BaseObstacle 0.5 / NavFn / sim_time 1.7 |
+| `config/nav2_params_house.yaml` | 房子 | inflation 0.32 / BaseObstacle 0.02 / SMAC cp=120 / sim_time 1.0 / 允许倒车 |
+
+基线三道闸门仍全通：`check_controller` 12、`check_limits` 10、`inject_faults` 9 抓 9。
+
+### 新增文件
+
+| 文件 | 内容 |
+|---|---|
+| `src/navbot_bringup/worlds/navbot_house.world` | TB3 5 房间场景（几何内联，不依赖 `GAZEBO_MODEL_PATH`） |
+| `src/navbot_bringup/maps/navbot_house.{pgm,yaml}` | 几何真值图（16.4×12.0 m，自由 147.9 m²） |
+| `src/navbot_bringup/config/nav2_params_house.yaml` | 房子专用参数（文件头列了 8 处差异） |
+| `tools/verify/world_to_map.py` | SDF 世界 → Nav2 占据栅格（保守栅格化） |
+| `tools/verify/path_select.py` | 多规划器路径打分筛选（规划层，10 秒） |
+| `tools/verify/nav_route.py` | JSON 路线逐点导航 + 计时 + 终点误差 |
+| `tools/verify/routes_house.json` | 房子 6 点巡检路线 |
+
+### 教训
+
+1. **换大场景先查"车听不听话"，再查"路走得对不对"。** 前两轮全在调 Nav2，
+   而真凶是轮子打滑和万向球摩擦 —— 判据只有一条：`/joint_states` 轮速 vs `gz model -p` 真值位移。
+2. **几何真值图不是"更准的图"，它有精度陷阱**：格心判据会让 <1 格的物体消失。
+   任何"从几何直接出图"的工具都要做保守栅格化。
+3. **参数名对了不等于插件换了。** Nav2 的 BT 里 `planner_id` 是字符串常量，
+   改 `planner_plugins` 只是改变了"注册表"，不改变"谁被点名"。
+4. **"能到"和"好用"是两件事。** G5 277 s 说明绕远能到，但真机上要在代价里加门宽/拥堵项。
