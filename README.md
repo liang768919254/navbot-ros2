@@ -31,7 +31,7 @@
 
 ## 系统组成
 
-四个包，依赖单向，没有循环：
+五个包，依赖单向，没有循环：
 
 | 包 | 职责 | 状态 |
 |---|---|---|
@@ -39,6 +39,7 @@
 | `navbot_bringup` | launch 文件、Nav2 与 slam_toolbox 参数、Gazebo 世界、地图 | 完成 |
 | `navbot_bridge` | 串口 ↔ ROS 话题桥接（Python 参照实现，448 行） | 完成，36 项测试 |
 | `navbot_chassis` | **C++ 版同一节点**（rclcpp） | 完成，16 项单测 + 端到端 50 Hz |
+| `keepout_layer` | **自研 Nav2 costmap 插件**：固定世界坐标的禁区层 | 完成，规划绕行已验证 |
 
 `navbot_bridge` 与 `navbot_chassis` 是**同一个节点的两种实现**，同时存在是故意的：
 Python 版是标准答案，C++ 版写完后用它逐字段对照，行为不一致就是 C++ 版错了。
@@ -84,6 +85,10 @@ C++ 版已完成，实现说明与踩坑记录见 [`src/navbot_chassis/NOTES_P1.
 │   │   ├── navbot_bridge/chassis_bridge.py   O 帧 → /odom+TF+/joint_states；/cmd_vel → V 帧
 │   │   ├── config/bridge_params.yaml         真机串口参数
 │   │   └── launch/bringup_real.launch.py     真机启动
+│   ├── keepout_layer/              Nav2 costmap 插件（自研禁区层）
+│   │   ├── include/keepout_layer/keepout_layer.hpp
+│   │   ├── src/keepout_layer.cpp      updateBounds / updateCosts
+│   │   └── keepout_layer_plugins.xml  pluginlib 描述
 │   └── navbot_chassis/             C++ 版同一节点（rclcpp，16 单测）
 │       ├── include/navbot_chassis/
 │       │   ├── protocol.hpp             协议层接口（纯逻辑，零 ROS 依赖）
@@ -512,6 +517,48 @@ verify_e2e.sh                   →  16 通过 / 4 失败 / 3 跳过
 
 底盘固件在 [`firmware/navbot_chassis/`](firmware/navbot_chassis)（CubeMX 工程，TODO 未填；
 本项目走软件方向，固件不作要求）。
+
+### 自定义禁区层 `keepout_layer`（Nav2 二次开发）
+
+Nav2 只提供 `static` / `obstacle` / `inflation` / `voxel` 这几层，表达不了
+**「地图上明明是空的，但业务上不能进」**——地毯边、充电桩前方、门口堆物。
+所以自己写了一层。
+
+```yaml
+global_costmap:
+  global_costmap:
+    ros__parameters:
+      # ★ keepout 必须在 inflation 之前：先标致命，再由膨胀层加代价带
+      plugins: ["static_layer", "obstacle_layer", "keepout_layer", "inflation_layer"]
+      keepout_layer:
+        plugin: "keepout_layer::KeepoutLayer"
+        keepout_enabled: true
+        keepout_min_x: 6.0
+        keepout_max_x: 7.0
+        keepout_min_y: 2.0
+        keepout_max_y: 3.0
+```
+
+**实测（2026-11-18，house 图）**：
+
+| 判据 | 结果 |
+|---|---|
+| 插件加载 | `Using plugin "keepout_layer"` → `Initialized` |
+| 标记格数 | **441 格**（`i 283..303, j 159..179`），正好 1 m × 1 m @ 0.05 |
+| 禁区可通行性 | 441 格代价全 ≥100（内切圆级别），**0 格可通行** |
+| 规划绕行 | A(5.0,2.5)→B(7.3,2.5)：直线 2.30 m → **实际 3.18 m（1.38x）**，路径点**无一落入禁区** |
+
+**两个踩过的坑**（写在这里免得下次重踩）：
+
+1. **Humble 的 `Layer` 基类不读 `<name>.enabled`**。它的 `enabled_` 成员未初始化（实测 false），
+   yaml 里写 `enabled: true` 完全没用，日志显示"禁用"、层不生效。
+   本插件改用独立参数 `keepout_enabled` 自己管。
+2. **`Layer::node_` 是 `std::weak_ptr`**，`node_->get_parameter()` 编译不过，必须先 `node_.lock()`。
+
+`isClearable()` 返回 **false**：禁区是业务约束，不该被恢复行为
+`ClearEntireCostmap` 抹掉——否则会出现「第一次导航绕开，触发一次恢复后直接穿过去」。
+
+---
 
 ### 导航控制器链（双层，参数全挂在 `FollowPath` 下）
 

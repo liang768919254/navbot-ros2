@@ -717,7 +717,10 @@ global_costmap:
       #   建图质量差时这里会是「走不出去」的原因。
       track_unknown_space: true
 
-      plugins: ["static_layer", "obstacle_layer", "inflation_layer"]
+      plugins: ["static_layer", "obstacle_layer", "keepout_layer", "inflation_layer"]
+      # ★ keepout_layer 必须在 inflation_layer **之前**：
+      #   先标致命，再由膨胀层给它加代价带。顺序反了的话禁区边缘没有膨胀，
+      #   规划器会让车贴着禁区边蹭过去。
 
       obstacle_layer:
         plugin: "nav2_costmap_2d::ObstacleLayer"
@@ -746,6 +749,22 @@ global_costmap:
         #    表现正是「车对着墙停住」。这种"两个 costmap 参数不一致"极难排查。
         inflation_radius: 0.32
         cost_scaling_factor: 5.0
+
+      # ======================================================================
+      # 自定义禁区层（src/keepout_layer，本仓库自写，非 Nav2 官方插件）
+      #   语义：这块矩形里「业务上不能进」——地毯边、充电桩前方、门口堆物。
+      #   与 obstacle_layer 的区别：那层是"看得见的障碍"，这层是"看不见的规矩"。
+      #   坐标是 map 系（米），必须落在地图自由区内，否则标了也没意义。
+      #   ★ 想临时关掉本层：把 enabled 改 false，不用动 plugins 列表。
+      # ======================================================================
+      keepout_layer:
+        plugin: "keepout_layer::KeepoutLayer"
+        keepout_enabled: true   # ★ 不用 enabled —— 基类不读它，写了也没用
+        # 右上房间的一角，441 格全自由，不在 6 点巡检路线上
+        keepout_min_x: 6.0
+        keepout_max_x: 7.0
+        keepout_min_y: 2.0
+        keepout_max_y: 3.0
 
       always_send_full_costmap: true
 

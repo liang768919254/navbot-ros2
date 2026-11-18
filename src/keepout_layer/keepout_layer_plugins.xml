@@ -1,0 +1,7 @@
+<?xml version="1.0"?>
+<!-- 让 costmap 的 pluginlib 能找到这个层 -->
+<library path="keepout_layer">
+  <class type="keepout_layer::KeepoutLayer" base_class_type="nav2_costmap_2d::Layer">
+    <description>在机器人周围标记一块禁区</description>
+  </class>
+</library>
