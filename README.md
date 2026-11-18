@@ -562,6 +562,12 @@ global_costmap:
    全局代价地图报 `Invalid frame ID "map"`，6 个 goal 全被拒。
    **要等日志出现 `OK 初值注入成功` 再巡检**——这个现象 2026-11-18 一天内撞了两次。
 
+3. **只等 `bt_navigator active` 就发 goal 会全部 REJECTED**（耗时 0.0 s）。
+   `sim_all` 的 `auto_init` 在 `nav_delay(12)+25=37 s` 才注入 AMCL 初值；
+   约 15 s 时 `bt_navigator` 就 active 了，但那时 `map→odom` 还不存在，
+   全局代价地图报 `Invalid frame ID "map"`，6 个 goal 全被拒。
+   **要等日志出现 `OK 初值注入成功` 再巡检**——这个现象 2026-11-18 一天内撞了两次。
+
 `isClearable()` 返回 **false**：禁区是业务约束，不该被恢复行为
 `ClearEntireCostmap` 抹掉——否则会出现「第一次导航绕开，触发一次恢复后直接穿过去」。
 
