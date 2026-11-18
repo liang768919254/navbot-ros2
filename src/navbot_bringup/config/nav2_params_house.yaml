@@ -366,26 +366,34 @@ controller_server:
       debug_trajectory_details: true
       min_vel_x: -0.10         # ★ 2026-11-16：允许小幅倒车，贴死角时能自救
       min_vel_y: 0.0           # ★ 差速车 Y 方向恒为 0
-      max_vel_x: 0.22
+      # ★★ 2026-11-17（S38 回退）：恢复 13:49 那次「fast」版的速度。
+      #   那一次房子图 6 点全过，总墙钟 225.7 s（vs S35 的 491 s、S36 的 626 s），
+      #   是目前最快的一次记录（log/fast_route.json）。
+      #   口径：**只提速，不动 costmap 结构**。
+      #     · 保持 HEAD 的局部图 3×3 / 5 Hz、raytrace 3.0 / obstacle 2.5、全局 1 Hz
+      #     · 保持 rotate_to_heading_angular_vel 0.8、forward_sampling_distance 0.3
+      #   14:13 那批「局部图 4×4 + 10 Hz + rotate 1.3 + 采样距离 0.45」的改动
+      #   之后再没跑通过（tune_nav2~5 全挂在 G1），已整体留在 .s37_wip 里不启用。
+      max_vel_x: 0.40
       max_vel_y: 0.0
-      max_vel_theta: 1.0
+      max_vel_theta: 1.6
       min_speed_xy: 0.0
-      max_speed_xy: 0.22
+      max_speed_xy: 0.40
       min_speed_theta: 0.0
       # ★ 加速度上限：这是防止「起步猛冲 / 刹车点头」的关键
       #   真机上还要受电机电流限制，仿真是理想模型，所以这里要主动设小
-      acc_lim_x: 2.5
+      acc_lim_x: 3.5
       acc_lim_y: 0.0
-      acc_lim_theta: 3.2
-      decel_lim_x: -2.5
+      acc_lim_theta: 4.5
+      decel_lim_x: -3.5
       decel_lim_y: 0.0
-      decel_lim_theta: -3.2
+      decel_lim_theta: -4.5
       # ★ 采样数：DWB 在本地的「搜索密度」
       #   三者的乘积 = 每周期评估的轨迹条数（20×5×20 = 2000 条）
       #   ★ 无独显的笔记本上这已经接近上限，再大就掉帧
-      vx_samples: 20
+      vx_samples: 25
       vy_samples: 5
-      vtheta_samples: 20
+      vtheta_samples: 24
       # ★ 预测时长：1.7s 是官方值。车慢可以短一点(1.0)，车快必须长一点
       sim_time: 1.0
       linear_granularity: 0.05
@@ -652,7 +660,13 @@ local_costmap:
         #      · 南走廊中点由 67.8 s 降到 < 30 s
         #      · 缝N（0.455 m）不再被走（2×0.16=0.32 < 0.455，零代价带 0.135）
         #        但缝N 本来就窄，车会优先走缝S，这是对的
-        inflation_radius: 0.32
+        # ★ 2026-11-17（S38 回滚复验）：局部改回 0.22，全局保持 0.32。
+        #   S36 的坑三：两处都 0.32 时，全局会规划出穿「桌群 0.14 m 缝」的路径
+        #   （SMAC 认为带代价可走），而局部同样 0.32 时 DWB 每条轨迹都踩代价格
+        #   → 无合法轨迹 → /cmd_vel_nav 恒 0 → Failed to make progress 死循环。
+        #   判据：局部 ≤ 全局。局部过大 → 车把自己困住；局部过小 → 贴着全局
+        #   路径却不敢走。0.22 = 车宽一半 0.12 + 10 cm 缓冲。
+        inflation_radius: 0.22
         cost_scaling_factor: 5.0
 
       voxel_layer:
@@ -829,10 +843,24 @@ planner_server:
       max_iterations: 1000000
       max_on_approach_iterations: 1000
       max_planning_time: 2.0   # ★ 20 个候选点 × 3 个规划器要能一轮跑完
-      # ★★ 软代价权重：1.0 = 只按真实代价走（接近 NavFn），
-      #    3.0 = 明显绕开膨胀区。**这是本轮唯一要调的旋钮**，
-      #    调大 → 路径更贴中线但可能绕远；调小 → 又退回「贴墙抄近路」。
-      cost_penalty: 120.0
+      # ★★★ 2026-11-17（S38）：`cost_penalty` 在 Humble 的 SmacPlanner2D 里
+      #   **根本不存在**。真正的旋钮只有 cost_travel_multiplier；写 cost_penalty
+      #   不报错、也不生效，规划器一直用默认 1.0。S35 那轮「cp30 / cp120 / cp800」
+      #   的对比全是空转，别再当旋钮用。
+      #
+      #   实测（path_select.py，出生点 (-1.0,-1.6) → G1 (-6.5,-3.0)）：
+      #     multiplier  1.0 → 长度 15.47 m  最小净空 0.14 m  ← 车过不去（外接半径 0.19）
+      #     multiplier 10.0 → 长度 16.19 m  最小净空 0.28 m  ← 能过
+      #     multiplier 30.0 → 16.21 m / 0.28 m（10 之后饱和，再调只加代价不换路）
+      #   语义：单格通行代价 = multiplier × 代价图软代价(0~252)。
+      #   1.0 时穿「5 格 × 200」的缝只比绕行 2 m 贵一点，A* 当然选缝。
+      #
+      #   ★ 13:49 那次 6/6（总墙钟 225.7 s，log/fast_route.json）走的就是 10.0 这一档：
+      #     那条 16 m 的绕行腿 48.7 s 走完 ⇔ 0.33 m/s，与 max_vel 0.40 对得上。
+      #     14:13 把它写成 1.0 之后，后面每一轮都卡在 G1 —— 这是本轮最大的单点回归。
+      cost_travel_multiplier: 10.0
+      # 下面这行只作历史留档，SMAC 不认（留着不报错，别指望它生效）
+      # cost_penalty: 120.0
       # ★ 参数名坑：Humble 里是 smooth_path，不是 smooth。
       #   写错不报错，只是 smoother 静默不生效（路径全是 45° 折线）。
       #   strings libnav2_smac_planner.so | grep -x "\.smooth_path" 可自证。
@@ -929,10 +957,10 @@ velocity_smoother:
     smoothing_frequency: 20.0
     scale_velocities: false
     feedback: "OPEN_LOOP"      # ★ 没接编码器反馈时用 OPEN_LOOP
-    max_velocity: [0.22, 0.0, 1.0]
-    min_velocity: [-0.22, 0.0, -1.0]
-    max_accel: [2.5, 0.0, 3.2]
-    max_decel: [-2.5, 0.0, -3.2]
+    max_velocity: [0.40, 0.0, 1.6]
+    min_velocity: [-0.22, 0.0, -1.6]
+    max_accel: [3.5, 0.0, 4.5]
+    max_decel: [-3.5, 0.0, -4.5]
     odom_topic: "odom"
     odom_duration: 0.1
     deadband_velocity: [0.0, 0.0, 0.0]

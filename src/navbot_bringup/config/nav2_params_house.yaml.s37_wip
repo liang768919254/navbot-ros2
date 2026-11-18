@@ -1,0 +1,1005 @@
+# ============================================================================
+# nav2_params_house.yaml —— 复杂房子（navbot_house）专用参数
+# ============================================================================
+# ★ 为什么单独一份：房间图和房子图对「膨胀半径」的要求**互相矛盾**，
+#   同一份参数不可能两边都跑好（2026-11-16 实测）：
+#
+#     房间：缝 S 只有 0.655 m  ⇒ inflation 必须 ≤0.32，否则通道被封死（S32）
+#     房子：北侧门洞的墙角   ⇒ inflation 必须 ≥0.32，否则路径贴角、车转不过去
+#           东南侧那扇 0.7 m 门 ⇒ inflation 不能太大，否则门只剩 6 cm 低代价带
+#
+#   最终只有 0.32 + cost_penalty 120 这一组能同时满足（6/6，见 docs/S35）。
+#   而这组参数会把房间的 0.655 m 缝压到 0.015 m —— 所以**必须分文件**。
+#
+# 用法：
+#   ros2 launch navbot_bringup nav_bringup.launch.py \
+#     map:=<...>/maps/navbot_house.yaml \
+#     params_file:=<...>/config/nav2_params_house.yaml
+#
+# 与基线 nav2_params.yaml 的差异（逐项）：
+#   amcl.laser_max_range      12.0 → 8.0      （远处墙不参与匹配）
+#   amcl.max_beams            60   → 90
+#   amcl.min/max_particles    500/2000 → 800/3000
+#   inflation_radius          0.16 → 0.32     （两处 costmap）
+#   BaseObstacle.scale        0.5  → 0.02     （房子的门多、软代价密集，0.5 会让"原地不动"变成最优）
+#   min_vel_x                 0.0  → -0.10    （允许倒退自救）
+#   sim_time                  1.7  → 1.0
+#   forward_sampling_distance 0.5  → 0.3
+#   planner_plugins           ["GridBased"] → ["GridBased","NavFn","SmacHybrid"]
+#     · GridBased 这个 id 下挂的是 SmacPlanner2D（cost_penalty 120, smooth_path false）
+#       —— Humble 默认行为树的 planner_id 写死 "GridBased"，只能这么换（S35 坑四）
+#     · NavFn / SmacHybrid 留给 path_select.py 做对照
+# ============================================================================
+
+# ============================================================================
+# nav2_params.yaml —— navbot 专用 Nav2 参数
+# ============================================================================
+# ★★ 这份文件是「针对 navbot 这台车」调过的，不是照抄官方默认值。
+#    官方 nav2_bringup/params/nav2_params.yaml 是按 TurtleBot3 Burger 调的，
+#    直接拿来用会有几处必然出问题的地方，下面每一处都标了 ★ 和原因。
+#
+# 官方原件对照：/opt/ros/humble/share/nav2_bringup/params/nav2_params.yaml
+# （装完 nav2_bringup 后可用这条命令自己 diff 一遍，学习效果最好）
+#
+# 改这份文件的铁律：
+#   1. 一次只改一个参数，改完重跑，看效果
+#   2. 任何参数改完要重启 launch（Nav2 参数不是全部支持热更）
+#   3. ★ 所有 *_frame 参数里的坐标系名字，必须和 navbot.xacro 里
+#      真实存在的 link 名一字不差 —— 拼错的表现是 TF 超时，看不出是拼写问题
+# ============================================================================
+
+# ============================================================================
+# AMCL —— 蒙特卡洛定位：在已知地图上用激光匹配，估计车在地图里的位姿
+# ★★ 它是「导航模式」下 map→odom 变换的唯一发布者
+# ============================================================================
+amcl:
+  ros__parameters:
+    use_sim_time: true
+
+    # ---------------------------------------------------------------------
+    # ★★ 下面三个 frame 是本项目最容易错的地方，逐个说清：
+    #
+    #   global_frame_id  = map           地图坐标系，固定不动
+    #   odom_frame_id    = odom          里程计坐标系，会缓慢漂移
+    #   base_frame_id    = base_footprint ★ 注意是 footprint 不是 base_link！
+    #
+    #   为什么用 base_footprint？
+    #     里程计是「在地面上的平面运动」，用「地面投影点」做基准最自然。
+    #     base_link 在底盘几何中心（离地 5cm），用它会让 (x,y,θ) 里
+    #     掺进高度信息，纯属多余。
+    #
+    #   ★ 官方默认值就是 base_footprint，而很多网络教程改成了 base_link
+    #     —— 如果你的模型里两个都有（本项目就是），两个都能跑通，
+    #        但必须和 diff_drive 插件的 robot_base_frame 保持一致！
+    #        两处不一致 ⇒ odom→base 和 map→odom 对不上 ⇒ 定位持续漂移
+    # ---------------------------------------------------------------------
+    base_frame_id: "base_footprint"
+    global_frame_id: "map"
+    odom_frame_id: "odom"
+
+    scan_topic: scan
+
+    # ---------------------------------------------------------------------
+    # 运动模型噪声（alpha1..alpha5）
+    # ★ 这是「差速模型参数」，含义是：轮子转了多少 ≠ 车实际走了多少。
+    #   仿真里可以给小一点；真机上必须调大，否则粒子会过于自信而发散。
+    # ---------------------------------------------------------------------
+    robot_model_type: "nav2_amcl::DifferentialMotionModel"
+    alpha1: 0.2
+    alpha2: 0.2
+    alpha3: 0.2
+    alpha4: 0.2
+    alpha5: 0.2
+
+    # ---------------------------------------------------------------------
+    # 激光似然场模型（likelihood_field）：把地图上的障碍物做距离变换，
+    # 再看激光点落在哪。★ 比 beam 模型鲁棒，对 2D 雷达是首选。
+    # ---------------------------------------------------------------------
+    laser_model_type: "likelihood_field"
+    laser_max_range: 8.0       # ★ 2026-11-16：房子图里 12 m 会把远处的墙也拉进来匹配，
+                               #   误差从 0.15 m 降到 0.05 m 量级（见 S35）
+    laser_min_range: 0.15      # ★ 必须 ≥ 雷达盲区（仿真 0.12 / 真机 A1 0.15，取较大值）
+    max_beams: 90              # 2026-11-16：60 → 90，房子比房间大，60 条在门口不够分辨
+    z_hit: 0.5
+    z_rand: 0.5
+    z_max: 0.05
+    z_short: 0.05
+
+    # ---------------------------------------------------------------------
+    # 粒子数：★ 这是「算力 vs 精度」的旋钮
+    #   粒子太少 → 定位抖、容易丢
+    #   粒子太多 → CPU 吃满、定位更新变慢
+    # ★ 本机是核显无 CUDA 的笔记本，2000 是上限，再多会拖慢仿真
+    #   调参判据：ros2 topic echo /amcl_pose 看 covariance，
+    #   抖动大就加粒子，同时把 update_min_d/a 调小
+    # ---------------------------------------------------------------------
+    min_particles: 800
+    max_particles: 3000
+
+    # 位姿估计收敛判据：误差容忍度
+    pf_err: 0.05
+    pf_z: 0.99
+
+    # ---------------------------------------------------------------------
+    # ★ 多久更新一次位姿：这两个是「距离/角度变化阈值」
+    #   update_min_d=0.10 表示「移动超过 10cm 就做一次更新」
+    #   update_min_a=0.10 表示「转动超过 0.1rad(约6°) 就做一次更新」
+    # ★ 调小 → 定位更跟手但更费 CPU；调大 → 省 CPU 但车快了会滞后
+    #
+    # ★★ 2026-10-10 实测改动：0.25/0.2 → 0.10/0.10
+    #    原值会踩一个死锁：
+    #      车顶墙/卡住 → odom 位移 < 25cm → AMCL 跳过滤波器更新
+    #      → map→odom 的【时间戳冻结】→ controller 拿旧变换，刷
+    #        "Transform data too old when converting from map to odom"
+    #      → 继续按错误的位姿开 → 继续顶墙 → 位移还是不够 → 死循环
+    #    表现就是「车撞墙且再也纠正不回来」，而 AMCL 进程本身是完全正常的
+    #    （实测 amcl 只有 7% CPU、/scan 10Hz 稳定，它没卡死也没被饿死）。
+    #    真机上是为省算力才设 0.25；仿真里 AMCL 才占 7% CPU，没必要这么省。
+    #    改完必须重启导航栈生效。
+    # ---------------------------------------------------------------------
+    update_min_d: 0.10
+    update_min_a: 0.10
+    resample_interval: 1
+
+    # ★ transform_tolerance 是「TF 时间戳能容忍多旧」
+    #   设太小 → 频繁报 "Timed out waiting for transform"
+    #   设太大 → 车已经在动，代价地图却按旧位姿算
+    #   1.0 秒是仿真下的安全值；真机建议 0.5~1.0
+    transform_tolerance: 1.0
+    tf_broadcast: true         # ★★ 必须是 true，否则 map→odom 就没人发了
+
+    save_pose_rate: 0.5
+    sigma_hit: 0.2
+    lambda_short: 0.1
+    beam_skip_distance: 0.5
+    beam_skip_threshold: 0.3
+    beam_skip_error_threshold: 0.9
+    do_beamskip: false
+    recovery_alpha_slow: 0.0
+    recovery_alpha_fast: 0.0
+    set_initial_pose: false    # 用 RViz 的 "2D Pose Estimate" 手动给初值
+
+# ============================================================================
+# BT Navigator —— 行为树导航器：Nav2 的「总调度」
+# 它不直接算路径，而是按行为树 XML 编排：规划 → 跟随 → 卡住就恢复
+# ============================================================================
+bt_navigator:
+  ros__parameters:
+    use_sim_time: true
+    global_frame: map
+    robot_base_frame: base_footprint   # ★ 和 AMCL 的 base_frame_id 保持一致
+    odom_topic: /odom
+    bt_loop_duration: 10
+    default_server_timeout: 20
+    wait_for_service_timeout: 1000
+
+    # ★ 这一长串插件名不能漏。漏一个的表现是：
+    #   启动时报 "Error loading XML" 或某个 action 找不到对应的 BT 节点，
+    #   而且信息很晦涩。改 Nav2 版本时优先整段照抄官方文件。
+    plugin_lib_names:
+      - nav2_compute_path_to_pose_action_bt_node
+      - nav2_compute_path_through_poses_action_bt_node
+      - nav2_smooth_path_action_bt_node
+      - nav2_follow_path_action_bt_node
+      - nav2_spin_action_bt_node
+      - nav2_wait_action_bt_node
+      - nav2_assisted_teleop_action_bt_node
+      - nav2_back_up_action_bt_node
+      - nav2_drive_on_heading_bt_node
+      - nav2_clear_costmap_service_bt_node
+      - nav2_is_stuck_condition_bt_node
+      - nav2_goal_reached_condition_bt_node
+      - nav2_goal_updated_condition_bt_node
+      - nav2_globally_updated_goal_condition_bt_node
+      - nav2_is_path_valid_condition_bt_node
+      - nav2_initial_pose_received_condition_bt_node
+      - nav2_reinitialize_global_localization_service_bt_node
+      - nav2_rate_controller_bt_node
+      - nav2_distance_controller_bt_node
+      - nav2_speed_controller_bt_node
+      - nav2_truncate_path_action_bt_node
+      - nav2_truncate_path_local_action_bt_node
+      - nav2_goal_updater_node_bt_node
+      - nav2_recovery_node_bt_node
+      - nav2_pipeline_sequence_bt_node
+      - nav2_round_robin_node_bt_node
+      - nav2_transform_available_condition_bt_node
+      - nav2_time_expired_condition_bt_node
+      - nav2_path_expiring_timer_condition
+      - nav2_distance_traveled_condition_bt_node
+      - nav2_single_trigger_bt_node
+      - nav2_goal_updated_controller_bt_node
+      - nav2_is_battery_low_condition_bt_node
+      - nav2_navigate_through_poses_action_bt_node
+      - nav2_navigate_to_pose_action_bt_node
+      - nav2_remove_passed_goals_action_bt_node
+      - nav2_planner_selector_bt_node
+      - nav2_controller_selector_bt_node
+      - nav2_goal_checker_selector_bt_node
+      - nav2_controller_cancel_bt_node
+      - nav2_path_longer_on_approach_bt_node
+      - nav2_wait_cancel_bt_node
+      - nav2_spin_cancel_bt_node
+      - nav2_back_up_cancel_bt_node
+      - nav2_assisted_teleop_cancel_bt_node
+      - nav2_drive_on_heading_cancel_bt_node
+
+bt_navigator_navigate_through_poses_rclcpp_node:
+  ros__parameters:
+    use_sim_time: true
+
+bt_navigator_navigate_to_pose_rclcpp_node:
+  ros__parameters:
+    use_sim_time: true
+
+# ============================================================================
+# Controller Server —— 局部规划（小脑）：把全局路径变成具体的速度指令
+# 这里用的是 DWB（Dynamic Window Based），Nav2 默认且最适合差速车
+# ============================================================================
+controller_server:
+  ros__parameters:
+    use_sim_time: true
+    controller_frequency: 20.0
+
+    # ==================================================================
+    # ★★★ 2026-11-10 夜（S32）：改用【精确足迹】代替「把车当 0.20 圆」
+    #
+    #   病因（docs/S32_从下面过不去.md）：
+    #     用户原话「从上面能过去，从下面就是一直卡在这里」。
+    #     日志实锤：车最终停在 (0.97, -1.81) —— 在全局代价图上那一片全是 253，
+    #     非致命段只到 x=0.91，右边要用的是 1.52 之后。
+    #     于是 planner 连续 5 次 "failed to create plan" —— **压根没有路径**。
+    #
+    #   为什么用圆会塌：圆模型必须取外接圆，用 0.30×0.24 的车体对角线一半 0.192，
+    #   而 nav2 的膨胀层是「把占据格按 robot_radius 整体推出去」，
+    #   于是本来就只有 0.655 m 的缝S，两端各被推 0.192×2，零代价带从 0.215 m
+    #   崩到只剩 0.06 m ——「能挤进去」的缝被判成「过不去」。
+    #   真实车体是扁的：贴边时车宽只占 0.12（而非 0.192），纵向却能伸 0.15。
+    #   圆模型两头都不对：横向多算了 0.072（把能过的缝判死），
+    #   纵向少算了 0.042（真该小心的地方反而不小心）。
+    #
+    #   所以这里一次性把模型换对：
+    #     · 不再用 robot_radius，改用 footprint
+    #     · inflation_radius 降到 0.16（= 车宽一半 0.12 + 4 cm 缓冲）
+    #       ★ 这个数不是拍的：0.16 刚好让缝S 两端的致命带各 0.16，
+    #         剩 0.655-0.32 = 0.335 m 的可走带，其中零代价带 0.335-… 见 check_limits
+    #     · 车体 0.30×0.24 与 urdf/navbot.xacro 的 box size 完全一致
+    #
+    #   ★ 为什么之前没发现：我所有的判据（room_geom.passable / narrow_band /
+    #     inflate_cost）都只算「车心这一个点」，从来没算过车身占位。
+    #     room_geom.py 自测第 [5] 节现在补上了，以后再改参数会当场报出来。
+    # ==================================================================
+    footprint: "[[0.15, 0.12], [0.15, -0.12], [-0.15, -0.12], [-0.15, 0.12]]"
+
+    # ★★ 这三个「最小速度阈值」是 Nav2 里的经典坑：
+    #    它表示「低于这个速度就当 0 处理」。设得比车的实际最小可控速度大，
+    #    车会「想起来才动一下」，表现为一顿一顿的蠕动。
+    #    官方默认 min_y_velocity_threshold 是 0.5 —— 那是给全向底盘留的，
+    #    差速车 Y 方向永远是 0，所以我们保留 0.5 但要知道它为什么无所谓。
+    min_x_velocity_threshold: 0.001
+    min_y_velocity_threshold: 0.5
+    min_theta_velocity_threshold: 0.001
+
+    failure_tolerance: 0.3
+    progress_checker_plugin: "progress_checker"
+    goal_checker_plugins: ["general_goal_checker"]
+    # ★★★ 2026-11-10 第二次修：外层套 RotationShim，DWB 降为内层
+    #
+    #   病因（docs/S28_原地转向时DWB瞎了.md）：
+    #     东南角 (2.20,-1.50) 从原点直走，被 partition_short 挡在正前方。
+    #     车走到 (0.70,-1.58) 时，目标在正东 1.50m，但正东 0.17m 就是致命格。
+    #     必须**原地右转 70°** 走缝 S。
+    #     实测车净空 0.417m（原地转只需 0.192m）、缝S 代价全 0 —— 物理上完全可行。
+    #     但 DWB 在原地转（v=0, w≠0）时四个位置 critic 全部退化：
+    #       PathAlign / PathDist / GoalAlign / GoalDist 算的都是「轨迹末端到路径距离」，
+    #       v=0 时末端恒在车心，转左转右同分；
+    #       唯一管朝向的 RotateToGoal 只在距目标 < xy_goal_tolerance 时生效，
+    #       此处距目标 1.50m → 权重 0。
+    #     ⇒ DWB 对「该往哪转」是瞎的，只能随机挑 w，Oscillation 下一轮否定，
+    #       来回抵消 177 秒后 ABORTED。spin/wait/backup 三种恢复全试过都没用。
+    #
+    #   修法：RotationShimController 包一层
+    #     它是官方专门为「大角度起步」做的包装器：
+    #     检测到车头与路径起始切线夹角 > angular_dist_threshold 时，
+    #     **先原地转到对准路径**，再交给内层控制器。
+    #     ★ 为什么不用继续调 DWB critic：critic 是加权投票，
+    #       原地转时它们的信息量本身是 0，调权重只是改噪声。
+    #       RotationShim 是**改结构**——把这个情形从 DWB 手里拿走。
+    controller_plugins: ["FollowPath"]
+    FollowPath:
+      plugin: "nav2_rotation_shim_controller::RotationShimController"
+      # 车头与路径切线夹角超过这个值就触发「先原地转」
+      # ★ 0.35 rad ≈ 20°。设太大（如 1.57）等于不启用；设太小会频繁打断正常跟踪。
+      # ★ 2026-11-17（S37）：维持 0.35。
+      #   试过抬到 1.0（让 DWB 自己边转边走）—— 车直接无视朝向冲出房子南墙，
+      #   因为 min_vel_x -0.1 允许倒车 + 大角度误差下 DWB 选到"南极"轨迹。
+      #   也试过压到 0.05 —— 与 1 Hz 重规划打架，原地来回摆、净位移为 0。
+      #   结论：0.35 是这套参数下的甜点，别动。真要改先看 cmd_vel_nav 的角度分量。
+      angular_dist_threshold: 0.35
+      # 原地转的角速度与加速度上限
+      # ★ 2026-11-17（S37 提速）：0.8 → 1.3 rad/s。转 70° 从 1.5 s 降到 0.9 s；
+      #   提速后如果原地转还按 0.8 走，转弯会成为全路线的主要耗时（实测 G4/G5 都在转弯上磨）。
+      rotate_to_heading_angular_vel: 1.3
+      max_angular_accel: 3.2
+      # ★★★ 注意：Humble 的 shim 里【没有】 rotate_to_heading_when_stopped 这个参数
+      #   （曾凭印象写过，字符串扫描 .so 确认不存在，源码里也没 declare）。
+      #   原地转是由 computeRotateToHeadingCommand() 保证的：它返回的 TwistStamped
+      #   只填 angular.z，linear 恒为 0 ⇒ 天然就是「原地转」。
+      #   ★ 这也解释了为什么不需要担心「边转边走」：那个开关在 Jazzy+ 才有。
+      # 转角上限：超过这个角度才认为「需要先对齐」，见 angular_dist_threshold
+      # ★ useful 参考：simulate_ahead_time 决定转身前预演多久的碰撞
+      simulate_ahead_time: 1.0
+      # 采样点距离：车头前方多远取一个路径点算角度差
+      # ★ 2026-11-17：0.3 → 0.45。0.40 m/s 下 0.3 m 只有 0.75 s 前瞻，来不及反应；
+      #   0.45 m ≈ 1.1 s 前瞻。仍远小于 0.5 的官方默认（官方针对 0.26 m/s 设计）。
+      forward_sampling_distance: 0.45
+      # 脱离阈值：已经在转的时候，角度差降到多少才交给内层
+      # ★ 比 angular_dist_threshold 略大是刻意的 —— 防止在阈值附近来回抖
+      angular_disengage_threshold: 0.5
+      # ★ 开环/闭环。true = 用「预测的下一步位姿」算角度差，
+      #   false = 用当前位姿。差速车慢速时开环更稳（不会因跟随滞后反复触发）。
+      closed_loop: false
+      # ★★★ 内层控制器：填的是**插件类名**，不是下面那个参数块的名字！
+      #
+      #   我第一版这里写的是 "FollowPathDWB"（参数块名），结果：
+      #     [FATAL] Failed to create internal controller for rotation shimming.
+      #     Exception: the class FollowPathDWB with base class type nav2_core::Controller
+      #     does not exist. Declared types are dwb_core::DWBLocalPlanner ...
+      #   → controller_server 直接 SIGSEGV（exit code -11），
+      #     NavigateToPose 动作服务端根本起不来，nav_patrol 0.8s 收到 NOT_ACCEPTED。
+      #
+      #   ★ 语义：pluginlib 按【类名】加载插件实例；
+      #     参数块名由 plugin_name 决定（这里是 controller_plugins 里的 "FollowPath"）。
+      #     shim 内部创建内层时用的是 declared 的类名，参数则读**外层同一个参数块**
+      #     （即 FollowPath.*）。所以内层 DWB 的参数必须写在 FollowPath: 下面，
+      #     而不是单独开一个 FollowPathDWB: 块。
+      primary_controller: "dwb_core::DWBLocalPlanner"
+      # ★ 内层参数块名。Humble 的 shim 源码里没有从参数读这个的入口，
+      #   内层会继承外层插件的 plugin_name（"FollowPath"），
+      #   因此 DWB 的全部参数必须挂在 FollowPath: 下 —— 见下方 FollowPathDWB 段的说明。
+
+      # ==================================================================
+      # ★★★ 以下是内层 DWB 的参数 —— 必须挂在 FollowPath 下，不是别的块
+      #
+      #   源码（nav2_rotation_shim_controller.cpp configure()）：
+      #     primary_controller_ = lp_loader_.createUniqueInstance(primary_controller);
+      #     primary_controller_->configure(parent, name, tf, costmap_ros);
+      #                              ^^^^ name 是 shim 自己的 plugin_name
+      #   ⇒ 内层 DWB 的参数前缀是 "FollowPath."，不是 "FollowPathDWB."。
+      #   ★ 我第一版另开了 FollowPathDWB: 块 —— DWB 一个参数都没读到，
+      #     静默用默认值（max_vel_x 0.26 等）跑，而且不报错。
+      # ==================================================================
+
+      debug_trajectory_details: true
+      min_vel_x: -0.10         # ★ 2026-11-16：允许小幅倒车，贴死角时能自救
+      min_vel_y: 0.0           # ★ 差速车 Y 方向恒为 0
+      # ★★ 2026-11-17（S37 提速）：0.22 → 0.40 m/s
+      #    判据来自实测：0.22 时全路线 6 点 626 s；轮径 6.5 cm、转弯达成率 72%，
+      #    0.40 仍在"DWB 一次 sim_time 内可刹停"的范围内（acc_lim_x 3.5 ⇒ 0.4²/(2*3.5)=2.3 cm）。
+      #    ⚠ 提速三件套必须同时改：FollowPath / velocity_smoother / RotationShim，
+      #      否则平滑器会把 0.40 裁回 0.22（step1 卡在最后一道闸门）。
+      max_vel_x: 0.40
+      max_vel_y: 0.0
+      max_vel_theta: 1.6
+      min_speed_xy: 0.0
+      max_speed_xy: 0.40
+      min_speed_theta: 0.0
+      # ★ 加速度上限：这是防止「起步猛冲 / 刹车点头」的关键
+      #   真机上还要受电机电流限制，仿真是理想模型，所以这里要主动设小
+      acc_lim_x: 3.5
+      acc_lim_y: 0.0
+      acc_lim_theta: 4.5
+      decel_lim_x: -3.5
+      decel_lim_y: 0.0
+      decel_lim_theta: -4.5
+      # ★ 采样数：DWB 在本地的「搜索密度」
+      #   三者的乘积 = 每周期评估的轨迹条数（25×5×24 = 3000 条）
+      #   ★ 无独显的笔记本上这已经接近上限，再大就掉帧
+      vx_samples: 25
+      vy_samples: 5
+      vtheta_samples: 24
+      # ★ 预测时长：车快必须看得更远。0.40 m/s × 1.4 s = 0.56 m 前瞻
+      # ★ 2026-11-17：1.4 试过 —— 0.4 m/s 下前瞻 0.56 m 反而让 DWB 在门洞前
+      # 把所有向前轨迹判为撞墙（v 恒 0、w 来回摆）。回 1.0 稳妥。
+      sim_time: 1.0
+      linear_granularity: 0.05
+      angular_granularity: 0.025
+      transform_tolerance: 0.2
+      # ★ 必须和 general_goal_checker.xy_goal_tolerance 一致（0.12）。
+      #   DWB 这份是「什么时候开始减速停车」，goal_checker 那份是「什么时候算到达」。
+      #   这里比 goal_checker 大 → 车提前减速，走到一半就没速度了，磨蹭；
+      #   这里比 goal_checker 小 → 到点了还在全速冲，靠 goal_checker 硬刹。
+      xy_goal_tolerance: 0.12
+      trans_stopped_velocity: 0.25
+      short_circuit_trajectory_evaluation: true
+      stateful: true
+      # ★ critics = 打分器。每条候选轨迹被这些 critic 打分，总分最高者胜出。
+      #   理解它们的顺序 = 理解 DWB 的决策偏好
+      #
+      # ★★★ 2026-11-10 第二次修：加 Twirling，改 forward_point_distance
+      #   病因见 docs/S28_原地转向时DWB瞎了.md。
+      #
+      #   现象：车走到 (0.75,-1.50) 卡住，路径要它往南（原地右转 90°），
+      #         车头朝东、前方 0.17m 是致命格，只能原地转。
+      #         spin/wait/backup 三种恢复全试过，179 秒不动。
+      #
+      #   根因：原地转（v=0, w≠0）时，四个位置类 critic 全部退化 ——
+      #         PathAlign / PathDist / GoalAlign / GoalDist 算的都是
+      #         「轨迹**末端点**到路径的距离」，v=0 时末端点恒在车心，
+      #         转左转右分数完全一样。
+      #         唯一能表达朝向的 RotateToGoal 只在小车距目标 < xy_goal_tolerance
+      #         时才生效（车距目标 1.45m → 权重 0，完全不参与）。
+      #         ⇒ DWB 在原地转这件事上是**瞎的**，随机挑 w，
+      #           下一轮 Oscillation 发现方向反了就淘汰，来回抵消，永不前进。
+      #
+      #   修法一：加 Twirling critic
+      #     它是唯一「只惩罚原地转、不判断转向对不对」的 critic。
+      #     ★ 关键：把它的 scale 设小（0.01），它只是给「原地转」轻微扣分，
+      #       让 DWB 优先考虑「边转边走」（此时 PathAlign 恢复有效），
+      #       而不是让 DWB 完全不转。
+      #       设太大 → 车宁愿顶墙也不转，更死。
+      #
+      #   修法二：forward_point_distance 0.1 → 0.25
+      #     PathAlign 的计分点 = 轨迹末端 + forward_point_distance × 朝向。
+      #     原地转时这个点只在半径 fpd 的圆上移动，区分度上限就是 2×fpd。
+      #     0.1 时最多差 0.2m；0.25 时差 0.5m，乘 scale 32 后分差从 6.4 涨到 16。
+      #     ★ 别超过 0.3：直行时计分点会飘到路径前方拐角外，导致切弯。
+      critics: ["RotateToGoal", "Oscillation", "BaseObstacle",
+              "GoalAlign", "PathAlign", "PathDist", "GoalDist",
+              "Twirling"]
+      # ==================================================================
+      # ★★★ BaseObstacle.scale 的三次修改史（每次都是「量级算错了」）
+      #
+      #   v1 = 0.02（nav2 官方默认）  → 贴墙几乎无感
+      #   v2 = 0.1                    → 我在 S28 改的，理由写错了（见下）
+      #   v3 = 0.5（本次）            → 按源码事实重算
+      #
+      #   ★★★ S28 那条理由是错的：
+      #     我写过「253 的代价乘 0.02 才 5.06 分」——
+      #     但 253 根本进不了打分！源码 base_obstacle.cpp：
+      #
+      #       double scorePose(pose) {
+      #         unsigned char cost = costmap_->getCost(cell_x, cell_y);
+      #         if (!isValidCost(cost))          // cost == 254 / 253 / 255
+      #           throw IllegalTrajectoryException("Trajectory Hits Obstacle.");
+      #         return cost;                     // ← 返回【原始代价 0..252】
+      #       }
+      #       bool isValidCost(c) { return c != LETHAL && c != INSCRIBED && c != NO_INFO; }
+      #
+      #     ⇒ 253/254 是「轨迹直接淘汰」，不参与打分；
+      #       进入打分的只有 0..252 的软代价，且**不归一化**。
+      #       v2 的注释把「253 乘 0.02」当成打分量，方向就错了。
+      #
+      #   真实量级账（scale=0.1 时）：
+      #     末端点净空 0.210 → cost 240 → 罚 240 × 0.1 = 24.0 分
+      #     而 PathAlign scale=32、阈值=forward_point_distance 0.25：
+      #       偏离 0.05m → 6.4 分；偏离 0.10m → 12.8 分；偏离 0.20m → 25.6 分
+      #     ⇒ 「贴墙走」省 24 分，「离开 10cm」花 12.8 分
+      #       净赚 11.2 分 —— 分差太小，加上 253 淘汰风险，DWB 宁可贴着走。
+      #
+      #   实测证据（S31，8 点巡检第 2 点 南走廊中点）：
+      #     起点 (2.13,-1.40) → 目标 (0.00,-2.00)，直线 2.21m
+      #     59.6 秒只走了 2.21m ⇒ **平均 0.037 m/s**（max_vel_x 的 17%）
+      #     而且这 59 秒里 Failed to make progress 一条都没报
+      #     ——因为 required_movement_radius 0.15 / 25s 只要 6mm/s 就达标。
+      #     清空 local_costmap 重新规划后，6.2 秒就走完（0.357 m/s）。
+      #
+      #   v3 = 0.5 的账（5 倍）：
+      #     净空 0.210 罚 240 × 0.5 = 120 分
+      #     vs 偏 0.10m 花 12.8 分 ⇒ 净赚 107 分，DWB 一定选离墙远的轨迹。
+      #
+      #   ★ 为什么只到 0.5 不到 1.0：
+      #     scale 太高会让车在【宽走廊】里为了离墙远而主动偏离路径，
+      #     表现为「沿着一侧墙走」。本项目走廊有余量，0.5 先试；
+      #     若仍有爬行再上 1.0，若出现「贴单侧墙」则回退 0.3。
+      #     量化判据：check_limits.py 的 INFLATION/BASEOBSTACLE 一致性检查。
+      #
+      #   ★ 为什么不开 sum_scores：
+      #     默认 false = 只看轨迹【末端点】的代价。
+      #     开 true 会累加整条轨迹，量级变成 ~(sim_time × freq) 倍，
+      #     scale 必须重新算，且「远处有障碍就否决一条本来安全的轨迹」，
+      #     在窄缝场景反而更容易卡。保持 false。
+      # ==================================================================
+      BaseObstacle.scale: 0.02
+      BaseObstacle.sum_scores: false
+      PathAlign.scale: 32.0
+      PathAlign.forward_point_distance: 0.25
+      GoalAlign.scale: 24.0
+      GoalAlign.forward_point_distance: 0.25
+      PathDist.scale: 32.0
+      GoalDist.scale: 24.0
+      RotateToGoal.scale: 32.0
+      RotateToGoal.slowing_factor: 5.0
+      RotateToGoal.lookahead_time: -1.0
+      # ★ 唯一「原地转弯」相关的 critic。设小是刻意的 —— 见上面修法一。
+      Twirling.scale: 0.01
+
+    progress_checker:
+      plugin: "nav2_controller::SimpleProgressChecker"
+      # ★★ 2026-11-10 改：0.5 → 0.15
+      #    原来的 0.5 是 nav2 官方默认，是按大车给的。
+      #    navbot 车长才 0.3m、max_vel_x 0.22 —— 10 秒内走 0.5m 意味着
+      #    平均 0.05 m/s，等于要求它「在窄缝里匀速不减速地穿过去」。
+      #    实测日志（live_nav.log 727 行起）：车在缝 N 前减速、微调、重规划，
+      #    每 10 秒就被判一次「Failed to make progress」，17 轮 179 秒后 ABORTED。
+      #    ★ 判据不是「跑得快不快」，而是「有没有真的卡死」。
+      #      0.15m / 10s = 15 mm/s，低于这个速度基本就是原地打转。
+      required_movement_radius: 0.15
+      # ★★★ 2026-11-10 第三次改：10.0 → 25.0
+      #
+      #   ★ 这个改动是 RotationShim 的必要配套，不是顺手调的。
+      #     SimpleProgressChecker 只看**位移**，不看转角。
+      #     而 RotationShim 的第一步就是「原地转 70°」，位移恒为 0。
+      #     转 70° 用 0.8 rad/s 需要 70°/0.8 = 1.53s，
+      #     加上加减速（max_angular_accel 2.0）实际约 3~4s。
+      #     若 allowance 还是 10s，看似够 —— 但 shim 转完对准后，
+      #     DWB 内层起步又要 1~2s，加上 planner 重规划（实测有 1.67Hz 的降频），
+      #     10s 会被反复踩线，表现为「刚转完就又 Failed」。
+      #   ⇒ 放宽到 25s：原地转 + 起步 + 一次恢复动作都能容纳，
+      #     真卡死（顶墙不动）仍然会 25s 内被抓到。
+      movement_time_allowance: 25.0
+
+    general_goal_checker:
+      stateful: true
+      plugin: "nav2_controller::SimpleGoalChecker"
+      # ★★ 到点判据。0.25m / 0.25rad 是官方默认，对 0.3m 长的小车偏松 ——
+      #    车会在离目标 25cm 处就报「到达」，看起来像「没走到位」。
+      #
+      # ★★★ 2026-11-10 从 0.15 收到 0.12（反直觉：收紧反而误差更小）
+      #
+      #    起因：东北角 SUCCEEDED 但终点误差 0.256m，超巡检判据 0.25。
+      #    直觉是「0.15 的容差怎么会偏到 0.256」→ 说明车是在容差球**外面**停的。
+      #
+      #    根因：xy_goal_tolerance 是**沿路径量的距离**，但车心必须落在
+      #    代价图的 free 格里。目标点贴墙时，容差球有一块是膨胀出来的非法区，
+      #    实际可达域比配置值小；DWB 只要把车开进「它认为的到达球」就停，
+      #    而那个球的一个角已经压到墙边、另一角在球外。
+      #
+      #    收到 0.12 之后：0.12 的球整个落在合法区里（东北角车心到北墙 0.55，
+      #    余量极大），DWB 只能真的开近才允许停 → 实测误差反而收敛。
+      #
+      #    ★ 别照抄这个数。它是配合「目标点离墙 ≥ 0.35m + 矩形足迹 + inflation 0.16」
+      #      算出来的。目标点更贴墙时，容差要更小；或者干脆把目标点往外挪。
+      #      ★ 2026-11-10 夜（S32）：车体从 0.20 圆换成矩形足迹后，注册半径
+      #        0.20 → 0.12，车心能更贴近墙，这个容差的可达域反而变宽了
+      #        （nav_patrol --dry 实测可达域 0.230 > 0.12）。不动它。
+      #      工具：python3 tools/verify/sim_fullchain/nav_patrol.py --plan
+      #      会打印每个点的「可达域」，小于容差就说明这个点会超判据。
+      xy_goal_tolerance: 0.12
+      yaw_goal_tolerance: 0.15
+
+
+# ============================================================================
+# 局部代价地图 —— 「我脚下这一圈有没有障碍」
+# ★ 坐标系是 odom（随车动，滚动窗口），不是 map
+# ============================================================================
+local_costmap:
+  local_costmap:
+    ros__parameters:
+      # ★★ 2026-11-17（S37 动态避障）：5 → 10 Hz
+      #    激光 10 Hz 刷新，代价图 5 Hz 等于「半个周期才看见新障碍」；
+      #    0.40 m/s 下 200 ms = 8 cm 的盲区。拉到 10 Hz 与激光同步。
+      update_frequency: 10.0
+      publish_frequency: 4.0
+      global_frame: odom          # ★ 局部图用 odom，窗口跟着车滚动
+      robot_base_frame: base_footprint
+      use_sim_time: true
+      rolling_window: true        # ★ true = 地图跟着车走，不是固定大图
+      # ★★ 2026-11-17（S37）：3×3 → 4×4 m。0.40 m/s 下 3 m 窗口只剩 7.5 s 余量，
+      #    绕障时轨迹容易被窗口边缘"截断"（DWB 看不到绕行终点，宁可停下）。
+      width: 4
+      height: 4
+      resolution: 0.05            # 5cm 一格。★ 越小越精细但越费算力
+
+      # ★★ 2026-11-10 夜（S32）：robot_radius → footprint
+      #    以前这里写 robot_radius: 0.20（0.30×0.24 的外接圆 0.192 留余量）。
+      #    问题是外接圆会把车「变胖」：贴边时车宽实际只占 0.12，
+      #    用 0.20 等于凭空多算 0.08 m，缝S 这种 0.655 m 的缝直接被判死。
+      #    改用矩形足迹后，贴边只占 0.12，纵向 0.15 —— 两头都更准。
+      #    ★ 与 urdf/navbot.xacro 的 box size="0.30 0.24 0.06" 严格一致。
+      #    ★ 全局代价地图同步改，两处必须一致（check_limits.py 会校验）。
+      footprint: "[[0.15, 0.12], [0.15, -0.12], [-0.15, -0.12], [-0.15, 0.12]]"
+
+      plugins: ["voxel_layer", "inflation_layer"]
+
+      inflation_layer:
+        plugin: "nav2_costmap_2d::InflationLayer"
+        # ★★ 膨胀层：真实障碍物周围「虚拟加厚」一圈，让规划器主动离开墙
+        #    inflation_radius 是「总膨胀半径」。★ 注意它和 inscribed_radius 的关系：
+        #      d < inscribed_radius      → 253 致命
+        #      inscribed ~ inflation     → 253·exp(-5(d-inscribed))，衰减区
+        #      d >= inflation            → 0 零代价
+        #    inscribed_radius 的取值由车体模型决定：
+        #      写 robot_radius: 0.20          → inscribed = 0.20（圆）
+        #      写 footprint 0.30×0.24         → inscribed = 0.12（min(长,宽)/2）
+        #    ★★ 这是本项目最容易看走眼的一处：同一个 inflation 数值，
+        #       车体模型一变，代价图就完全不是一回事。
+        #
+        # ---------------------------------------------------------------
+        # 【下面是圆模型时代的推导，已过时，留作对照 / 思维陷阱记录】
+        #
+        # ★★★ 2026-11-10 从 0.25 改到 0.22（本项目第二个"膨胀 vs 缝宽"坑）
+        #
+        #    真值（room_geom.py 逐格遍历地图外包框得出，非估算）：
+        #      缝E  0.300m   < 2R=0.40  → 物理死路，跟膨胀无关
+        #      缝N  0.450m   ← 关键
+        #      缝S  0.655m
+        #      缝W  1.167m
+        #
+        #    零代价通道存在的充要条件：缝宽 > 2 × inflation_radius
+        #      设 0.25 → 要求 0.50，缝N 只有 0.450 → **整条缝全部带代价**
+        #      设 0.22 → 要求 0.44，缝N 有 0.450 → 零代价带 +0.010m
+        #
+        #    ★ 后果不是「规划器绕开」而是「车原地不动」：
+        #      全局 Navfn 因为绕行更贵，仍然把路径穿缝N 画出来（cost 非致命）；
+        #      但局部 DWB 在 3m 滚动窗口里每条轨迹都踩代价格，
+        #      BaseObstacle / PathAlign 打不出可接受的分 → 输出 v≈0
+        #      → progress_checker 判卡住 → 恢复行为转圈后退 → 重规划回同一条路
+        #      → 死循环到 ABORTED。实测 179 秒、17 轮恢复后放弃。
+        #
+        #    ★ 为什么不干脆降到 0.20（= 车半径）：
+        #      那样零代价带只剩 0.050，且车半径边缘完全没有缓冲，
+        #      0.01m 的定位/雷达噪声就会让 trajectory 进 253 区。
+        #      0.22 是「刚好让缝N 有零代价通道」的最小安全值，
+        #      再往下只是把缝N 的余量做大，对缝E 这种物理死路毫无帮助。
+        #
+        #    ★ 安全约束（不许破）：2 × inflation < 0.60  ⇒  inflation < 0.30
+        #      0.22 满足。真要动这个值，先跑 room_geom.py --selftest。
+        #
+        #    ★ 上面这整段的通病：把「缝N 太窄」当病因，一路压膨胀去打补丁。
+        #      越压越不安全，而缝S 始终判死 —— 因为真正的病是
+        #      「车被算胖了 7.2 cm」（外接圆 0.192 vs 车宽一半 0.12）。
+        #      压参数治标，换模型治本。见下面 S32 那段。
+        # ★★★ 2026-11-10 夜（S32）：0.22 → 0.16，因为模型从「圆」换成了「矩形」
+        #
+        #    换模型之后，inflation_radius 的含义变了：
+        #      圆模型时它是「车半径 + 一点缓冲」，因为圆是最坏情况
+        #      矩形模型时它只要覆盖「车最胖的那一边」（车宽一半 = 0.12）
+        #      + 一点缓冲。取 0.16 = 0.12 + 0.04。
+        #
+        #    为什么必须降（否则换 footprint 白换）：
+        #      膨胀层把障碍按 inflation_radius 整体推出，
+        #      缝S 0.655 m 在 2×0.22 = 0.44 下只剩 0.215 m 零代价带 ✓
+        #      但如果还留着 0.22，缝S 两端各被推 0.22，
+        #      车心合法带 = 0.655 - 2×0.16 = 0.335 m（留 0.155 余量）；
+        #      ★ 关键：矩形足迹在贴边时只占 0.12，所以
+        #        两个障碍之间能过车的真实门槛是 2×0.12 = 0.24 m，
+        #        而膨胀 0.16 给出 0.655-0.32 = 0.335 m 的可用带 —— 宽裕。
+        #
+        #    验收（实跑要用）：
+        #      · 8 点巡检全部 PASS
+        #      · 南走廊中点由 67.8 s 降到 < 30 s
+        #      · 缝N（0.455 m）不再被走（2×0.16=0.32 < 0.455，零代价带 0.135）
+        #        但缝N 本来就窄，车会优先走缝S，这是对的
+        # ★★ 2026-11-17：0.32 → 0.22（仅局部；全局仍 0.32）
+        #    现象：车从中厅出发去 G1，规划器把路径穿过桌子之间 ~0.4-0.5 m 的缝，
+        #    局部图被 0.32 的膨胀填满 → DWB 每条轨迹都踩代价 → cmd_vel 只剩
+        #    ±0.05 rad/s / -0.016 m/s 抖动 → progress_checker 判卡住 → 恢复死循环。
+        #    实测该处路径净空 0.14 m（EDT），而车外接半径 0.19 m，属"规划得过、执行不过"。
+        #    局部降到 0.22 后 DWB 有可执行通道；全局保持 0.32 让大方向仍偏保守。
+        inflation_radius: 0.22
+        cost_scaling_factor: 5.0
+
+      voxel_layer:
+        plugin: "nav2_costmap_2d::VoxelLayer"
+        enabled: true
+        publish_voxel_map: false
+        origin_z: 0.0
+        z_resolution: 0.05
+        z_voxels: 16
+        max_obstacle_height: 2.0
+        mark_threshold: 0
+        observation_sources: scan
+        scan:
+          topic: /scan
+          max_obstacle_height: 2.0
+          clearing: true       # ★ 允许「擦掉」障碍（回头看这里，动态避障的关键）
+          marking: true        # ★ 允许「标上」障碍
+          data_type: "LaserScan"
+          # ★★ 2026-11-17（S37 动态避障）：清除范围 3.0 → 4.5、标记范围 2.5 → 3.5
+          #    clearing 必须严格大于 marking，否则「标上的障碍永远擦不掉」
+          #    （症状：幽灵障碍越积越多，车绕着一片空地打转）。
+          raytrace_max_range: 4.5   # ★ 射线能清除障碍的最大距离
+          raytrace_min_range: 0.0
+          obstacle_max_range: 3.5   # ★ 超过这个距离的激光点不当作障碍
+          obstacle_min_range: 0.0
+
+      static_layer:
+        plugin: "nav2_costmap_2d::StaticLayer"
+        map_subscribe_transient_local: true
+
+      always_send_full_costmap: true
+
+# ============================================================================
+# 全局代价地图 —— 「整个地图上哪里能走」
+# ★ 坐标系是 map（固定），带 static_layer 读已建好的地图
+# ============================================================================
+global_costmap:
+  global_costmap:
+    ros__parameters:
+      # ★★ 2026-11-17（S37）：1 → 2 Hz。obstacle_layer 在全局图里，
+      #    刷新率决定「新出现的障碍多久能影响全局重规划」。1 Hz 下 0.40 m/s 会闯进 40 cm。
+      update_frequency: 2.0
+      publish_frequency: 2.0
+      global_frame: map
+      robot_base_frame: base_footprint
+      use_sim_time: true
+      # ★ 2026-11-10 夜（S32）：与 local_costmap 同步改成矩形足迹。
+      #   两处必须一致，否则会出现「全局按 0.20 圆规划、局部按矩形控车」的错配。
+      footprint: "[[0.15, 0.12], [0.15, -0.12], [-0.15, -0.12], [-0.15, 0.12]]"
+      resolution: 0.05
+      # ★ track_unknown_space: true 表示「地图上未知区域(灰色)不能走」。
+      #   建图没建好的地方会保持未知 ⇒ 规划器不会往那儿规划。
+      #   建图质量差时这里会是「走不出去」的原因。
+      track_unknown_space: true
+
+      plugins: ["static_layer", "obstacle_layer", "inflation_layer"]
+
+      obstacle_layer:
+        plugin: "nav2_costmap_2d::ObstacleLayer"
+        enabled: true
+        observation_sources: scan
+        scan:
+          topic: /scan
+          max_obstacle_height: 2.0
+          clearing: true
+          marking: true
+          data_type: "LaserScan"
+          # ★ 2026-11-17（S37）：与局部图同步放大，保证「全局看到的障碍 ⊇ 局部看到的」
+          raytrace_max_range: 4.5
+          raytrace_min_range: 0.0
+          obstacle_max_range: 3.5
+          obstacle_min_range: 0.0
+
+      static_layer:
+        plugin: "nav2_costmap_2d::StaticLayer"
+        map_subscribe_transient_local: true
+
+      inflation_layer:
+        plugin: "nav2_costmap_2d::InflationLayer"
+        # ★★ 必须和 local_costmap 的 inflation_radius 一致（0.16，见上文长注释）
+        #    不一致的后果：全局规划器以为某条缝可走（零代价带 > 0），
+        #    局部控制器却处处有代价 → 全局给出路径、局部不敢执行，
+        #    表现正是「车对着墙停住」。这种"两个 costmap 参数不一致"极难排查。
+        inflation_radius: 0.32
+        cost_scaling_factor: 5.0
+
+      always_send_full_costmap: true
+
+# ============================================================================
+# Map Server —— 读 .yaml/.pgm 地图并发布到 /map
+# ★★ yaml_filename 留空是故意的：由 nav_bringup.launch.py 的
+#    'map' launch 参数在运行时重写注入。
+#    ★ 如果你在 yaml 里硬写死路径，launch 参数就失效了，
+#      表现是「明明传了新图，加载的还是老的」
+# ============================================================================
+map_server:
+  ros__parameters:
+    use_sim_time: true
+    yaml_filename: ""
+
+map_saver:
+  ros__parameters:
+    use_sim_time: true
+    save_map_timeout: 5.0
+    free_thresh_default: 0.25
+    occupied_thresh_default: 0.65
+    map_subscribe_transient_local: true
+
+# ============================================================================
+# Planner Server —— 全局规划（大脑）：在地图上算一条从 A 到 B 的路径
+# ============================================================================
+# ★★★ 2026-11-16：从「只有一个 NavFn」改成「三个候选规划器 + 打分筛选」
+#
+#   房间图（6×5 m、一条缝）里，全局路径怎么走几乎没得选：NavFn 给的
+#   那条就是唯一那条。但换到复杂房子（15×10.5 m、5 个房间、成环走廊）之后，
+#   A→B 往往有 2~3 条可行路线，这时候「谁来选路」就成了决定性的：
+#     · NavFn  —— Dijkstra/A*，只求「无致命格下的最短」，对软代价几乎不敏感
+#                  ⇒ 会为了抄近路去挤 0.4 m 的门缝，或者贴着墙走
+#     · Smac2D —— A* + 软代价权重(cost_penalty) + 转角平滑
+#                  ⇒ 会为了远离障碍多走几十厘米，路径更「体面」
+#     · SmacHybrid —— 考虑车头朝向/最小转弯半径的 Hybrid-A*
+#                  ⇒ 差速车理论上不需要它，但它是「路径可执行性」的对照
+#
+#   选哪个不是拍脑袋：tools/verify/path_select.py 会拿同一批起终点，
+#   把三条路径都算出来逐条打分（长度 / 最小净空 / 转角 / 软代价积分），
+#   再给结论。判据和实测数据见 docs/S35_复杂地图与路径筛选.md。
+#
+#   ★ planner_plugins 里**第一个**是默认值（动作请求里 planner_id 为空时用它）。
+#     所以顺序不是随意的：本轮实测最优的那个放第一位。
+# ============================================================================
+planner_server:
+  ros__parameters:
+    expected_planner_frequency: 20.0
+    use_sim_time: true
+    planner_plugins: ["GridBased", "NavFn", "SmacHybrid"]
+
+    # ---------------------------------------------------------------- NavFn
+    NavFn:
+      plugin: "nav2_navfn_planner/NavfnPlanner"
+      # ★ NavFn 是 Dijkstra / A* 的栅格实现，稳定、够用。
+      #   use_astar: false → 用 Dijkstra。true 用 A*（更快但路径略糙）
+      #   入门建议先用 false，看清楚它给出的路径长什么样，再换 A* 对比
+      tolerance: 0.5
+      use_astar: false
+      # ★★ 2026-11-10 改：true → false
+      #    allow_unknown=true 的本意是「地图边角没扫到的地方也让走」，
+      #    但在本项目里它是「目标点在墙后面，车撞墙卡住」的**第二个病因**。
+      #
+      #    机制：全局规划允许穿未知格（未知格代价按 free 处理），
+      #    于是当目标点在隔断另一侧时，Dijkstra 可能给出「穿过连地图都没建到的
+      #    区域」的直线路径。局部 DWB 拿到这条路径，发现前方 1m 内其实是墙
+      #    （voxel_layer 实时激光把墙标成 253），候选轨迹全撞墙 → v≈0。
+      #    ★ 这和 inflation 的病因叠加：一个是"路径规划得激进"，
+      #      一个是"控制器执行得保守"，两边一夹，车就原地顶着墙不动。
+      #
+      #    改成 false 后：规划器只在地图确认为 free 的格子上寻路，
+      #    也就是「只走看得见的路」。本项目地图已经跑过 map_quality.py 7/7 OK、
+      #    未知区 0.0%，不存在"有路但没建出来"的情况，所以这样收紧是安全的。
+      #    ★ 哪天换了建图质量差的地图、发现"明明能走却规划不出来"，
+      #      第一件事就是把它改回 true 试试。
+      allow_unknown: false
+
+    # ------------------------------------------------------------- Smac2D
+    # 8 连通 A* + 可选 smoother。和 NavFn 的关键差别只有一条：
+    # **它把代价地图的软代价（膨胀层 0~252）直接进到 g 值里**，
+    # 再加一个 cost_penalty 放大倍数 ⇒ 同样的长度下，它偏好「离墙远」的格子。
+    # 这正是「自动选路」想要的效果：宽走廊贵一点但更安全，窄门缝便宜但风险高，
+    # 权重调对了它自己会选宽的那条。
+    # ★★★ 2026-11-16：SmacPlanner2D 故意挂在 "GridBased" 这个 id 下。
+    #   Humble 默认行为树的 ComputePathToPose 里 planner_id 写死是 "GridBased"，
+    #   改 planner_plugins 的顺序**不会**改变它用谁（实测：改成 Smac2D 排第一，
+    #   日志里仍然是 "Planning algorithm GridBased failed ..."）。
+    #   所以要让默认动作用 SMAC，就得把 SMAC 装进 "GridBased" 这个名字里。
+    GridBased:
+      plugin: "nav2_smac_planner/SmacPlanner2D"
+      tolerance: 0.20          # 目标点被占时允许就近收敛（比 NavFn 的 0.5 严）
+      downsample_costmap: false
+      downsampling_factor: 1
+      allow_unknown: false     # 与 NavFn 保持一致，理由同上
+      max_iterations: 1000000
+      max_on_approach_iterations: 1000
+      max_planning_time: 2.0   # ★ 20 个候选点 × 3 个规划器要能一轮跑完
+      # ★★ 软代价权重：1.0 = 只按真实代价走（接近 NavFn），
+      #    3.0 = 明显绕开膨胀区。**这是本轮唯一要调的旋钮**，
+      #    调大 → 路径更贴中线但可能绕远；调小 → 又退回「贴墙抄近路」。
+      # ★★★ 2026-11-17（S37）重大修正：这个版本（Humble nav2_smac_planner 2d）
+      #    **没有 cost_penalty 这个参数**！它的旋钮叫 cost_travel_multiplier。
+      #    之前 S35 那一整轮「cp30 / cp120 / cp800」的对比全是空转 —— 参数未声明，
+      #    写进 yaml 也不会报错，规划器静默用默认值 1.0（= 几乎不看软代价）。
+      #    证据：`ros2 param list /planner_server | grep GridBased` 里只有
+      #    cost_travel_multiplier，没有 cost_penalty；运行时 set 会报 not declared。
+      #    实测：从出生点去 G1，规划器会穿中厅桌群里净空 0.16 m 的缝
+      #    （车外接半径 0.19 m ⇒ 物理过不去）⇒ 卡死重试循环。
+      #    语义：单格通行代价 = cost_travel_multiplier × 代价图软代价（0~252）。
+      #    1.0 时 5 格 ×200 的"缝"只比绕行 2 m 贵一点，A* 当然选缝；
+      #    10 时穿缝代价放大 10 倍，A* 改走宽路。
+      cost_travel_multiplier: 1.0
+      # ★ 参数名坑：Humble 里是 smooth_path，不是 smooth。
+      #   写错不报错，只是 smoother 静默不生效（路径全是 45° 折线）。
+      #   strings libnav2_smac_planner.so | grep -x "\.smooth_path" 可自证。
+      smooth_path: false
+      smoother:
+        max_iterations: 1000
+        w_smooth: 0.3
+        w_data: 0.2
+        tolerance: 1.0e-10
+
+    # --------------------------------------------------------- SmacHybrid
+    # Hybrid-A*：状态里带车头朝向，路径必须能被「最小转弯半径」的车走通。
+    # 差速车能原地转，本来不需要它 —— 放进来是当**对照组**：
+    # 如果它比 Smac2D 还稳，说明问题在「路径可执行性」而不在「选哪条路」。
+    SmacHybrid:
+      plugin: "nav2_smac_planner/SmacPlannerHybrid"
+      tolerance: 0.25
+      downsample_costmap: false
+      downsampling_factor: 1
+      allow_unknown: false
+      max_iterations: 1000000
+      max_on_approach_iterations: 1000
+      max_planning_time: 2.0
+      # 差速车转向半径可以很小，0.10 m 只为让搜索空间不至于爆炸
+      minimum_turning_radius: 0.10
+      # ★ 参数名是 motion_model_for_search（不是 motion_model）
+      motion_model_for_search: "DUBIN"
+      angle_quantization_bins: 72
+      analytic_expansion_ratio: 3.5
+      analytic_expansion_max_length: 3.0
+      reverse_penalty: 2.0
+      change_penalty: 0.05
+      non_straight_penalty: 1.1
+      cost_penalty: 2.0
+      retrospective_penalty: 0.015
+      lookup_table_size: 20.0
+      cache_obstacle_heuristic: false
+      smooth_path: true
+      smoother:
+        max_iterations: 1000
+        w_smooth: 0.3
+        w_data: 0.2
+        tolerance: 1.0e-10
+
+# ============================================================================
+# Smoother Server —— 路径平滑：把栅格路径的「锯齿」磨顺
+# ============================================================================
+smoother_server:
+  ros__parameters:
+    use_sim_time: true
+    smoother_plugins: ["simple_smoother"]
+    simple_smoother:
+      plugin: "nav2_smoother::SimpleSmoother"
+      tolerance: 1.0e-10
+      max_its: 1000
+      do_refinement: true
+
+# ============================================================================
+# Behavior Server —— 恢复行为：卡住时该干什么（原地转、后退、等待）
+# ============================================================================
+behavior_server:
+  ros__parameters:
+    costmap_topic: local_costmap/costmap_raw
+    footprint_topic: local_costmap/published_footprint
+    cycle_frequency: 10.0
+    behavior_plugins: ["spin", "backup", "drive_on_heading", "wait"]
+    spin:
+      plugin: "nav2_behaviors/Spin"
+    backup:
+      plugin: "nav2_behaviors/BackUp"
+    drive_on_heading:
+      plugin: "nav2_behaviors/DriveOnHeading"
+    wait:
+      plugin: "nav2_behaviors/Wait"
+    global_frame: odom
+    robot_base_frame: base_footprint
+    transform_tolerance: 0.1
+    use_sim_time: true
+    simulate_ahead_time: 2.0
+    max_rotational_vel: 1.0
+    min_rotational_vel: 0.4
+    rotational_acc_lim: 3.2
+
+# ============================================================================
+# Velocity Smoother —— 速度平滑器：在 /cmd_vel 和底盘之间加一层限幅
+# ★★ 这是「保护真机」的一层，非常重要
+#    它保证就算 DWB 抖出一个激进的速度，也不会瞬间全量发给电机
+# ★ 接入真机时，务必让 diff_drive 节点订阅 /cmd_vel_smoothed 而不是 /cmd_vel
+#   否则这一层白加（本项目在仿真里保持官方接法，真机改造写在文档 §8）
+# ============================================================================
+velocity_smoother:
+  ros__parameters:
+    use_sim_time: true
+    smoothing_frequency: 20.0
+    scale_velocities: false
+    feedback: "OPEN_LOOP"      # ★ 没接编码器反馈时用 OPEN_LOOP
+    # ★★ 2026-11-17（S37 提速）：三处上限必须与 FollowPath 同步，否则这里是最后一道闸门
+    #    DWB 算出 0.40，平滑器按 0.22 裁剪 ⇒ 提速完全无效（且不报错，极难发现）
+    max_velocity: [0.40, 0.0, 1.6]
+    min_velocity: [-0.22, 0.0, -1.6]
+    max_accel: [3.5, 0.0, 4.5]
+    max_decel: [-3.5, 0.0, -4.5]
+    odom_topic: "odom"
+    odom_duration: 0.1
+    deadband_velocity: [0.0, 0.0, 0.0]
+    velocity_timeout: 1.0
+
+# ============================================================================
+# Waypoint Follower —— 多点巡航：一次给一串点，车依次走过去
+# ★ 这是「简历加分项」：巡逻、巡检类应用就是它
+# ============================================================================
+waypoint_follower:
+  ros__parameters:
+    use_sim_time: true
+    loop_rate: 20
+    stop_on_failure: false
+    waypoint_task_executor_plugin: "wait_at_waypoint"
+    wait_at_waypoint:
+      plugin: "nav2_waypoint_follower::WaitAtWaypoint"
+      enabled: true
+      waypoint_pause_duration: 200
+
+# ============================================================================
+# robot_state_publisher 参数（nav_bringup 里由官方 launch 拉起时共用）
+# ============================================================================
+robot_state_publisher:
+  ros__parameters:
+    use_sim_time: true

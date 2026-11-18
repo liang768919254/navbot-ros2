@@ -1,0 +1,230 @@
+# ============================================================================
+# navbot_nav.rviz —— 阶段 D 用：自主导航的「驾驶舱」
+# ============================================================================
+# 打开它就能：① 看地图 + 车在哪  ② 点 "2D Pose Estimate" 给初始位姿
+#             ③ 点 "Nav2 Goal" 发目标点  ④ 看全局路径 / 局部轨迹 / 代价地图
+#
+# ★★ 第一次打开务必按这个顺序操作，顺序错了会误判很多事：
+#   1. 确认 Fixed Frame = map（本配置已设好）
+#   2. 点 "2D Pose Estimate"，在地图上按车的实际位置拖一个箭头
+#   3. 等 1~2 秒，看红色激光点是否和地图上的墙贴合 → 贴合说明定位对了
+#   4. 才去点 "Nav2 Goal" 发目标
+#   ★ 跳过第 2、3 步直接发目标 = 必失败，而且报错信息和你想象的完全不同
+# ============================================================================
+Panels:
+  - Class: rviz_common/Displays
+    Name: Displays
+  - Class: rviz_common/Views
+    Name: Views
+  # ★★ 2026-11-16 移除 nav2_rviz_plugins/Navigation 2 面板：
+  #   该面板在 RViz 退出时会自动把整个导航栈生命周期节点 Shutdown，
+  #   实测「关掉 RViz 窗口 → bt_navigator 被 deactivate → 正在执行的导航目标被取消」。
+  #   发目标仍可用工具栏的 "Nav2 Goal"（GoalTool，不管生命周期）。
+
+# navbot_nav_house.rviz —— 房子图专用（俯视正交 Scale 62，能装下 16.4×12 m）
+Visualization Manager:
+  Class: ""
+  Displays:
+    - Class: rviz_default_plugins/Grid
+      Name: Grid
+      Enabled: true
+      Alpha: 0.3
+      Cell Size: 1
+      Color: 160; 160; 160
+      Line Style:
+        Line Width: 0.03
+        Value: Lines
+      Plane: XY
+      Plane Cell Count: 30
+      Reference Frame: <Fixed Frame>
+
+    # ★ 地图：Durability 必须是 Transient Local
+    - Class: rviz_default_plugins/Map
+      Name: Map
+      Enabled: true
+      Topic:
+        Depth: 1
+        Durability Policy: Transient Local
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /map
+      # ★★ 2026-11-10 改：0.7 → 1.0。
+      #    0.7 是当初为了让「地图别完全盖住代价图」才设的；
+      #    现在代价图默认关了、且垫在地图之下，地图就该是实心的。
+      #    半透明地图会让黑色墙体变成深灰，叠加背景色 48,48,48 后
+      #    对比度肉眼可见地掉一档 —— 这就是「导航版不清晰」的主因。
+      Alpha: 1.0
+      Color Scheme: map
+      Draw Behind: true
+
+    # ------------------------------------------------------------------
+    # ★★ 全局代价地图：看清楚「哪些地方被判定为不可走」
+    #   调试「过不去」问题的第一现场：
+    #   如果目标点周围一圈都是蓝紫色（膨胀区），就是 inflation 太大
+    #   —— 本项目「窄通道」考点就靠这个面板看出来
+    # ------------------------------------------------------------------
+    #
+    # ★★ 2026-11-10 改：默认【关闭】，Alpha 0.5 → 0.35，改为画在地图之下。
+    #    原来默认开启 + Alpha 0.5 + Draw Behind false，造成两个后果：
+    #      ① 每面墙两侧各糊一条 0.45 m 宽的蓝紫带（inflation 0.25 + cost_scaling 5.0），
+    #         视觉上「障碍物特别粗」，还盖住了真实墙体
+    #      ② 两层半透明叠加（/map 0.7 + costmap 0.5）让整屏发灰发糊，
+    #         对比建图版只有 /map 一层，所以建图版看着清爽得多
+    #    need_debug 时勾上即可（Nav2 的「过不去」问题还得靠它看）。
+    - Class: rviz_default_plugins/Map
+      Name: GlobalCostmap
+      Enabled: false
+      Topic:
+        Depth: 1
+        Durability Policy: Transient Local
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /global_costmap/costmap
+      Alpha: 0.35
+      Color Scheme: costmap
+      Draw Behind: true
+
+    # ★ 局部代价地图：滚动窗口，跟着车走
+    # ★ 同上：默认关闭。局部代价图是 3×3 m 滚动窗口，
+    #   一直开着会在车周围糊出一个大方块，比全局那份更挡视线。
+    - Class: rviz_default_plugins/Map
+      Name: LocalCostmap
+      Enabled: false
+      Topic:
+        Depth: 1
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /local_costmap/costmap
+      Alpha: 0.35
+      Color Scheme: costmap
+      Draw Behind: true
+
+    # ★★ 全局路径：规划器算出来的那条线。看到它 = 规划成功
+    #   看不到它但发了目标 → 规划失败，去看 planner_server 的日志
+    - Class: rviz_default_plugins/Path
+      Name: GlobalPlan
+      Enabled: true
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /plan
+      Color: 0; 255; 0
+      Line Style: Lines
+      Line Width: 0.08
+
+    # ★ 局部轨迹：DWB 选出的那条。抖动/画圈时看它最直观
+    - Class: rviz_default_plugins/Path
+      Name: LocalPlan
+      Enabled: true
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /local_plan
+      Color: 255; 170; 0
+      Line Style: Lines
+      Line Width: 0.06
+
+    # ★ 粒子云：AMCL 的 2000 个粒子。收敛时应该缩成一小团
+    #   ★★ 如果一直散成一大片 = 定位没收敛，先别发目标
+    # ⚠️ 默认【关闭】：AMCL 配的是 min 500 / max 2000 个粒子，RViz 每帧要画
+    #    2000 个 3D 箭头，核显（Iris Xe）上会直接把 GUI 拖死，表现为
+    #    「一点 2D Pose Estimate 就卡住」，再往后内存涨爆被内核 SIGKILL（exit code -9）。
+    #    想看粒子云收敛过程时再手动勾选，看完立刻取消。
+    - Class: rviz_default_plugins/PoseArray
+      Name: ParticleCloud
+      Enabled: false
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /particle_cloud
+      Shape: Arrow (Flat)
+      Color: 255; 255; 0
+      Alpha: 0.5
+      Arrow Length: 0.1
+
+    - Class: rviz_default_plugins/LaserScan
+      Name: LaserScan
+      Enabled: true
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Best Effort
+        Value: /scan
+      # ★★ 2026-11-10 改：3 px → 5 px。
+      #    建图版是 3 px 绿色贴在黑墙上，对比度高所以锐利；
+      #    导航版红色 + 底下压着蓝紫代价带，红色 3 px 被吃掉大半。
+      #    代价图关掉后红色对比度本来就够了，这里再放大一点是为了一次到位。
+      #    ⚠️ 不要超过 7 px：TopDownOrtho Scale=150 时 1 px ≈ 6.7 mm，
+      #       5 px ≈ 3.4 cm，已经比墙厚（10 cm）的三分之一还小，再粗就开始糊墙。
+      Style: Points
+      Size (Pixels): 7
+      Color Transformer: FlatColor
+      Color: 255; 0; 0
+      Decay Time: 0
+
+    - Class: rviz_default_plugins/RobotModel
+      Name: RobotModel
+      Enabled: true
+      Description Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /robot_description
+      Visual Enabled: true
+
+    - Class: rviz_default_plugins/TF
+      Name: TF
+      Enabled: false
+      Show Arrows: false
+      Show Axes: true
+      Show Names: false
+      Marker Scale: 0.5
+
+  Global Options:
+    # ★★ 导航模式：必须 map。写成 base_footprint 会让地图和车错位
+    Fixed Frame: map
+    Background Color: 48; 48; 48
+    Frame Rate: 30
+
+  Tools:
+    - Class: rviz_default_plugins/Interact
+    - Class: rviz_default_plugins/MoveCamera
+    - Class: rviz_default_plugins/Select
+    # ★★ 这两个是导航必用的：
+    #   SetInitialPose  → 界面显示为 "2D Pose Estimate"
+    #   GoalTool        → 界面显示为 "Nav2 Goal"
+    #
+    # ★ 2026-10-09 修正：GoalTool 的类名必须写成 nav2_rviz_plugins/GoalTool。
+    #   装了 Nav2 之后，这个类由 nav2_rviz_plugins 提供，
+    #   rviz_default_plugins/GoalTool 根本不存在，写错了会报：
+    #     PluginlibFactory: The plugin for class 'rviz_default_plugins/GoalTool'
+    #     failed to load ... Declared types are nav2_rviz_plugins/GoalTool ...
+    #   症状是工具栏里「Nav2 Goal」按钮加载不出来。
+    #   （这份配置原是在没装 Nav2 的环境里保存的，换机器就会踩）
+    - Class: rviz_default_plugins/SetInitialPose
+      Topic:
+        Value: /initialpose
+    - Class: nav2_rviz_plugins/GoalTool
+
+  Views:
+    Current:
+      Class: rviz_default_plugins/TopDownOrtho
+      Name: Current View
+      Scale: 62
+      Target Frame: <Fixed Frame>
+      X: 0
+      Y: -0.6
+    Saved: ~
+
+Window Geometry:
+  Height: 1000
+  Width: 1560

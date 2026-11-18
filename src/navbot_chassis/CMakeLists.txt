@@ -1,6 +1,11 @@
 cmake_minimum_required(VERSION 3.10)
 project(navbot_chassis)
 
+# 协议层要能单独测，所以提到 C++17（std::from_chars / std::lround 都要）
+if(NOT CMAKE_CXX_STANDARD)
+  set(CMAKE_CXX_STANDARD 17)
+endif()
+
 if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   add_compile_options(-Wall -Wextra -Wpedantic)
 endif()
@@ -10,17 +15,52 @@ find_package(rclcpp REQUIRED)
 find_package(nav_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(tf2_ros REQUIRED)
+find_package(sensor_msgs REQUIRED)
 
+# ============================================================
+# 1) 协议层：纯逻辑库，不依赖 ROS
+#    ★ 这一层是唯一需要单元测试的东西。节点只做 I/O。
+# ============================================================
+add_library(protocol_lib SHARED src/protocol.cpp)
+target_include_directories(protocol_lib PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>
+)
+
+# ============================================================
+# 2) 节点：只负责读串口 / 调库 / 发话题
+# ============================================================
 add_executable(chassis_node src/chassis_node.cpp)
+target_link_libraries(chassis_node protocol_lib)
 ament_target_dependencies(chassis_node
   rclcpp
   nav_msgs
   geometry_msgs
   tf2_ros
+  sensor_msgs
 )
 
-install(TARGETS chassis_node
-  DESTINATION lib/${PROJECT_NAME}
+install(TARGETS chassis_node DESTINATION lib/${PROJECT_NAME})
+install(TARGETS protocol_lib
+  ARCHIVE DESTINATION lib
+  LIBRARY DESTINATION lib
+  RUNTIME DESTINATION bin
 )
+install(DIRECTORY include/ DESTINATION include)
+
+# ============================================================
+# 3) 单元测试
+# ============================================================
+if(BUILD_TESTING)
+  find_package(ament_cmake_gtest REQUIRED)
+
+  ament_add_gtest(test_protocol test/test_protocol.cpp)
+  if(TARGET test_protocol)
+    target_link_libraries(test_protocol protocol_lib)
+  endif()
+endif()
+
+ament_export_include_directories(include)
+ament_export_libraries(protocol_lib)
 
 ament_package()
