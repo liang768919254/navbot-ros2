@@ -56,3 +56,7 @@ tools/verify/sim_fullchain/map_built.*
 
 # ==== 闭卷重写用的参考备份（含实现，不进仓库）====
 *.ai
+
+# ==== 临时备份（不���仓库）====
+*.bak
+*.bak-*
