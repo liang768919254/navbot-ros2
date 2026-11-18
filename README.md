@@ -38,10 +38,11 @@
 | `navbot_description` | URDF/xacro 模型，关节树、惯量、雷达支架 | 完成（7 link + 5 惯性宏） |
 | `navbot_bringup` | launch 文件、Nav2 与 slam_toolbox 参数、Gazebo 世界、地图 | 完成 |
 | `navbot_bridge` | 串口 ↔ ROS 话题桥接（Python 参照实现，448 行） | 完成，36 项测试 |
-| `navbot_chassis` | **C++ 版同一节点**（rclcpp） | **骨架，6 个 TODO 未填** |
+| `navbot_chassis` | **C++ 版同一节点**（rclcpp） | 完成，15 项单测 + 端到端 50 Hz |
 
 `navbot_bridge` 与 `navbot_chassis` 是**同一个节点的两种实现**，同时存在是故意的：
 Python 版是标准答案，C++ 版写完后用它逐字段对照，行为不一致就是 C++ 版错了。
+C++ 版已完成，实现说明与踩坑记录见 [`src/navbot_chassis/NOTES_P1.md`](src/navbot_chassis/NOTES_P1.md)。
 
 导航部分直接用 Nav2 官方 `bringup_launch.py`，自己只提供参数文件和地图。
 
@@ -82,11 +83,20 @@ Python 版是标准答案，C++ 版写完后用它逐字段对照，行为不一
 │   │   ├── navbot_bridge/chassis_bridge.py   O 帧 → /odom+TF+/joint_states；/cmd_vel → V 帧
 │   │   ├── config/bridge_params.yaml         真机串口参数
 │   │   └── launch/bringup_real.launch.py     真机启动
-│   └── navbot_chassis/             C++ 版同一节点（rclcpp，骨架）
-│       └── src/chassis_node.cpp
+│   └── navbot_chassis/             C++ 版同一节点（rclcpp，15 单测）
+│       ├── include/navbot_chassis/
+│       │   ├── protocol.hpp             协议层接口（纯逻辑，零 ROS 依赖）
+│       │   └── chassis_node.hpp         节点类声明（状态一览）
+│       ├── src/
+│       │   ├── protocol.cpp             O/V 帧编解码 + FrameReader
+│       │   └── chassis_node.cpp         rclcpp 节点：读线程 / 定时发布 / 三层异常
+│       ├── test/test_protocol.cpp       15 个 gtest（期望值取自协议 §8 golden vector）
+│       ├── check_progress.sh            一键看测试进度（通过 N/15）
+│       └── NOTES_P1.md                  实现说明、契约矛盾、踩坑记录
 ├── tools/                          不需要 ROS 技能树也能跑的工具
-│   ├── verify/                     无硬件验收体系（12 脚本 / 4748 行）
+│   ├── verify/                     无硬件验收体系（16 脚本 / 5305 行）
 │   │   ├── verify_e2e.sh              端到端 10 组判据
+│   │   ├── chassis_cpp_e2e.sh         C++ 版桥节点端到端（假底盘 → 虚拟串口 → /odom）
 │   │   ├── fake_chassis.py            假底盘，可注入四类故障
 │   │   ├── test_protocol.py           协议与运动学单测（44 项）
 │   │   ├── crosscheck_bridge_functions.py  桥内纯函数逐值对拍（61 条）
@@ -399,11 +409,24 @@ ros2 launch navbot_bringup nav_bringup.launch.py use_sim_time:=true \
 ```bash
 # 真机启动（改 bridge_params.yaml 里的 port 指向实际串口）
 ros2 launch navbot_bridge bringup_real.launch.py
-# 或直接跑节点
+
+# 或直接跑节点 —— Python 参照实现
 ros2 run navbot_bridge chassis_bridge --ros-args \
   -p port:=/dev/ttyUSB0 -p wheel_separation:=0.16 \
   -p wheel_radius:=0.0325 -p encoder_ppr:=2112.0
+
+# 或直接跑节点 —— C++ 实现（同一协议，参数名完全一致，可直接互换）
+ros2 run navbot_chassis chassis_node --ros-args \
+  -p port:=/dev/ttyUSB0 -p wheel_separation:=0.16 \
+  -p wheel_radius:=0.0325 -p encoder_ppr:=2112.0
 ```
+
+两版行为逐字段一致，**可随时互换**。C++ 版多两个参数：`publish_rate_hz`（默认 50）、
+`data_timeout_s`（默认 0.5）；Python 版同名常量写死在模块顶部。
+
+> ⚠️ 已知契约差异：Python 版 `parse_odom_frame` 要求字段数**严格等于 11**，
+> 而协议文档 §8.3 写的是「12 个字段 → 接受，忽略多余」。C++ 版跟协议文档。
+> 两者必有一处要改，待确认，详见 `src/navbot_chassis/NOTES_P1.md` §4。
 
 ### 数据流
 
@@ -430,21 +453,28 @@ STM32 ──O 帧(11字段,50Hz)──▶ chassis_bridge ──▶ /odom + TF(od
 不必等硬件到货。`fake_chassis.py` 冒充 STM32，还能注入四类故障（死机、乱码、seq 停滞、零点漂移）：
 
 ```bash
-./tools/verify/verify_e2e.sh         # 10 组 e2e 判据，一条命令跑完
+./tools/verify/verify_e2e.sh         # Python 版：10 组 e2e 判据，一条命令跑完
+./tools/verify/chassis_cpp_e2e.sh    # C++ 版：假底盘 → 虚拟串口 → /odom（六项判据）
 ```
 
 链路：
 
 ```
-fake_chassis.py ──写──> 虚拟串口 ──读──> chassis_bridge ──> /odom + TF + /joint_states
+fake_chassis.py ──写──> 虚拟串口 ──读──> chassis_bridge / chassis_node ──> /odom + TF + /joint_states
  (假 STM32)
 ```
 
-`tools/verify/` 顶层 12 个脚本、共 4748 行；`tools/verify/sim_fullchain/` 另有 38 个实时联调工具（9688 行）：
+> **★ pty 两端不能给同一进程用**（2026-11-17 实测）：`fake_chassis.py --make-socat`
+> 自己占 `ttyV0`，桥节点必须连**另一端** `ttyV1`。两端连同一个 slave 时，
+> 假底盘写的数据被 socat 从 master 转走，节点一帧都收不到，现象是
+> 「串口已打开、假底盘已发 650 帧、/odom 无数据」。`chassis_cpp_e2e.sh` 已按此处理。
+
+`tools/verify/` 顶层 16 个脚本、共 5305 行；`tools/verify/sim_fullchain/` 另有 38 个实时联调工具（9688 行）：
 
 | 脚本 | 行数 | 验什么 |
 |---|---|---|
 | `verify_e2e.sh` | 655 | 10 组端到端判据：话题频率、TF 树、坐标系命名、故障注入、陈旧数据停发、install 新鲜度 |
+| `chassis_cpp_e2e.sh` | 127 | C++ 版桥节点六项判据：话题存在、hz、内容样本、/joint_states、TF、日志行数 |
 | `test_protocol.py` | 370 | 协议帧编解码与 CRC，44 项单测 |
 | `fake_chassis.py` | 385 | 假 STM32：按协议吐里程计帧、收速度帧 |
 | `crosscheck_bridge_functions.py` | 436 | 桥内纯函数 vs 参考实现逐值对拍（61 条，含物理锚点） |
@@ -479,7 +509,7 @@ verify_e2e.sh                   →  16 通过 / 4 失败 / 3 跳过
 > 桥梁节点实测记录见 [`docs/S20_复盘_chassis_bridge实现.md`](docs/S20_复盘_chassis_bridge实现.md)：
 > `/odom` 49.923 Hz、乱码注入后进程存活且日志仅 2 行、`verify_e2e.sh` 通过 21 / 失败 0。
 
-底盘固件在 [`firmware/navbot_chassis.c`](firmware/navbot_chassis.c)（骨架，19 个 TODO 未填；
+底盘固件在 [`firmware/navbot_chassis/`](firmware/navbot_chassis)（CubeMX 工程，TODO 未填；
 本项目走软件方向，固件不作要求）。
 
 ### 导航控制器链（双层，参数全挂在 `FollowPath` 下）
@@ -546,7 +576,10 @@ python3 tools/verify/inject_faults.py      # 6 种故障注入，应全部被抓
 
 **`joint_state_publisher` 依赖降级**：它是运行时依赖，留在 `package.xml` 的 `<exec_depend>`，不要放进 `<depend>`。
 
-**`navbot_chassis` 只有骨架**：6 个 TODO 全空，`chassis_node` 能 build、能 spin，但没有业务逻辑。它存在的意义是给 C++ 版重写留容器，不是已交付功能。
+**`navbot_chassis` 尚未上真机**：C++ 版节点已完成（协议层 15 项单测、节点层端到端 50 Hz、零告警），
+但只在 `socat` 虚拟串口 + `fake_chassis.py` 上验过。上真机前还要两件事：
+① 当前用户加入 `dialout` 组（否则 `open()` 报权限拒绝）；
+② STM32 那侧 `firmware/navbot_chassis` 的 TODO 得先填，MCU 不发帧，PC 侧再对也没用。
 
 **★ 换仿真世界时不要照抄它的 physics 块**（2026-11-16 实测）：`navbot_house.world` 最初
 照搬了 TurtleBot3 官方的 ODE 配置，其中 `contact_surface_layer = 1 cm` 对 navbot
@@ -598,5 +631,6 @@ USB-TTL」那种接线；走 STM32 转发需要先做 AT 透传。确认步骤�
 | [H2 雷达链路联调结论](docs/H2_雷达链路联调结论.md) | 雷达为什么没数据：三层排查定位到雷达侧 |
 | [H3 室内建图导航落地路线](docs/H3_室内建图导航落地路线.md) | 从当前现状到建图定位避障的最短路径，四阶段带验收判据 |
 | [S35 复杂地图与路径筛选](docs/S35_复杂地图与路径筛选.md) | 5 房间场景接入、三规划器打分对比、执行层卡死的根因（physics 打滑） |
+| [P1 节点层实现说明](src/navbot_chassis/NOTES_P1.md) | C++ 版桥节点：三条硬要求怎么落实、契约矛盾、pty 坑、启动误报 bug |
 
 环境层的问题基本都沉淀在 `setup_env.sh` 文件头和 `docs/00_环境一键安装文档.md` 的「常见坑」章节。
