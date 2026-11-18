@@ -606,9 +606,17 @@ python3 tools/verify/inject_faults.py      # 6 种故障注入，应全部被抓
 全局代价地图的 `obstacle_layer` 会看到它们而静态层没有 ⇒ 全局可能规划穿过去。
 要么把 mesh 的 AABB 也栅格化，要么改用 SLAM 实建图。
 
-**G1 部分达成**：`sim_all.launch.py` 仍然不存在（仿真 + 导航要开两个终端）。但「连发多点 + 逐点复现记录」已经有了：
-`tools/verify/nav_route.py` + `routes_house.json`，房间图上是 8/8（S31 记录），
-房子图上 **6 点还没跑出 6/6**（原因见 S35 第 4 节）。这是当前简历上最大的空洞。
+**G1 部分达成**：`sim_all.launch.py` 仍然不存在（仿真 + 导航要开两个终端）。
+「连发多点 + 逐点复现记录」已经落地 —— `tools/verify/nav_route.py` + `routes_house.json`：
+
+| 地图 | 结果 | 记录 |
+|---|---|---|
+| 房间 `navbot_room` | **8 / 8** | [S31](docs/S31_8点全PASS之后的爬行问题.md) |
+| 房子 `navbot_house` | **6 / 6**，总墙钟 491 s，终点误差平均 0.111 m / 最大 0.147 m | [S35](docs/S35_复杂地图与路径筛选.md) |
+
+> 复现要点（S35 §8）：**单点超时给 420 s** —— G5 是 11.4 m 绕行，实测 277 s；
+> 初始位姿用 `set_pose.py --auto`（它会自检 `map→odom` 的 z/roll/pitch）。
+> 超时按默认 180 s 跑，G5 必挂；不给初值则 6 个 goal 全部 REJECTED（耗时 0.0 s）。
 
 **实车雷达驱动未安装**：`rplidar_ros` / `sllidar_ros2` 都不在 `ros2 pkg list` 里，真机上雷达前必须先补。
 

@@ -39,7 +39,11 @@ topic_hz() {
 
 # 尝试取内容样本（可能因管道缓冲取不到，不作为判负依据）
 topic_sample() {
-  PYTHONUNBUFFERED=1 timeout 8 ros2 topic echo "$1" 2>/dev/null | head -30
+  # ★ stdbuf -oL 是关键：ros2 topic echo 的 stdout 接管道时是块缓冲，
+  #   一帧 odom 的 YAML 几百字节，攒不满 4KB 就不 flush → head 一个字都收不到。
+  #   PYTHONUNBUFFERED 让 Python 层不缓冲，stdbuf -oL 让 libc 行缓冲，两个都要。
+  #   2026-11-18 实测：只加 PYTHONUNBUFFERED 仍然取不到样本。
+  PYTHONUNBUFFERED=1 timeout 8 stdbuf -oL ros2 topic echo "$1" 2>/dev/null | head -30
 }
 
 echo "════════ 1. 启动假底盘（socat 建 ttyV0 ↔ ttyV1）════════"
