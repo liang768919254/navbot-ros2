@@ -547,13 +547,20 @@ global_costmap:
 | 标记格数 | **441 格**（`i 283..303, j 159..179`），正好 1 m × 1 m @ 0.05 |
 | 禁区可通行性 | 441 格代价全 ≥100（内切圆级别），**0 格可通行** |
 | 规划绕行 | A(5.0,2.5)→B(7.3,2.5)：直线 2.30 m → **实际 3.18 m（1.38x）**，路径点**无一落入禁区** |
+| **不破坏原有导航** | 带本层跑完整 6 点巡检：**6/6 PASS**，总墙钟 199.9 s，误差平均 0.133 m / 最大 0.280 m |
 
-**两个踩过的坑**（写在这里免得下次重踩）：
+**三个踩过的坑**（写在这里免得下次重踩）：
 
 1. **Humble 的 `Layer` 基类不读 `<name>.enabled`**。它的 `enabled_` 成员未初始化（实测 false），
    yaml 里写 `enabled: true` 完全没用，日志显示"禁用"、层不生效。
    本插件改用独立参数 `keepout_enabled` 自己管。
 2. **`Layer::node_` 是 `std::weak_ptr`**，`node_->get_parameter()` 编译不过，必须先 `node_.lock()`。
+
+3. **只等 `bt_navigator active` 就发 goal 会全部 REJECTED**（耗时 0.0 s）。
+   `sim_all` 的 `auto_init` 在 `nav_delay(12)+25=37 s` 才注入 AMCL 初值；
+   约 15 s 时 `bt_navigator` 就 active 了，但那时 `map→odom` 还不存在，
+   全局代价地图报 `Invalid frame ID "map"`，6 个 goal 全被拒。
+   **要等日志出现 `OK 初值注入成功` 再巡检**——这个现象 2026-11-18 一天内撞了两次。
 
 `isClearable()` 返回 **false**：禁区是业务约束，不该被恢复行为
 `ClearEntireCostmap` 抹掉——否则会出现「第一次导航绕开，触发一次恢复后直接穿过去」。
@@ -674,6 +681,7 @@ AMCL 初值注入并自检通过（`map->odom` 的 z≈0、RPY 均 < 2°）。
 |---|---|---|
 | 房间 `navbot_room` | **8 / 8** | [S31](docs/S31_8点全PASS之后的爬行问题.md) |
 | 房子 `navbot_house` | **6 / 6**，总墙钟 491 s，终点误差平均 0.111 m / 最大 0.147 m | [S35](docs/S35_复杂地图与路径筛选.md) |
+| 房子 + `keepout_layer` | **6 / 6**，总墙钟 199.9 s，误差平均 0.133 m / 最大 0.280 m | 2026-11-18 |
 
 > 复现要点（S35 §8）：**单点超时给 420 s** —— G5 是 11.4 m 绕行，实测 277 s；
 > 初始位姿用 `set_pose.py --auto`（它会自检 `map→odom` 的 z/roll/pitch）。
