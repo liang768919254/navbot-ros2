@@ -68,6 +68,7 @@ C++ 版已完成，实现说明与踩坑记录见 [`src/navbot_chassis/NOTES_P1.
 │   │   └── rviz/navbot_check.rviz
 │   ├── navbot_bringup/             启动与配置
 │   │   ├── launch/
+│   │   │   ├── sim_all.launch.py        ★ 一条命令起全栈（map:=room|house）
 │   │   │   ├── sim_navbot.launch.py     只起仿真，不含 Nav2（x/y/yaw 可换出生点）
 │   │   │   ├── slam_mapping.launch.py   建图
 │   │   │   └── nav_bringup.launch.py    定位 + 导航
@@ -606,7 +607,20 @@ python3 tools/verify/inject_faults.py      # 6 种故障注入，应全部被抓
 全局代价地图的 `obstacle_layer` 会看到它们而静态层没有 ⇒ 全局可能规划穿过去。
 要么把 mesh 的 AABB 也栅格化，要么改用 SLAM 实建图。
 
-**G1 部分达成**：`sim_all.launch.py` 仍然不存在（仿真 + 导航要开两个终端）。
+**一条命令起全栈**（`sim_all.launch.py`，2026-11-18 新增）：
+
+```bash
+ros2 launch navbot_bringup sim_all.launch.py map:=house auto_init:=true   # 房子图
+ros2 launch navbot_bringup sim_all.launch.py                              # 房间图（默认）
+```
+
+实测 35 s 内 `/clock` `/scan` `/odom` `/map` 全就绪、`bt_navigator` active、
+AMCL 初值注入并自检通过（`map->odom` 的 z≈0、RPY 均 < 2°）。
+
+只暴露 `map` 一个参数，是因为 world / map / params **三件套必须配套**——
+只换其中一两个不报错，但会得到「地图是房子、参数是房间」的半截状态，
+表现是路径贴墙、门洞过不去，而你以为是调参问题。出生点也绑在 map 上。
+
 「连发多点 + 逐点复现记录」已经落地 —— `tools/verify/nav_route.py` + `routes_house.json`：
 
 | 地图 | 结果 | 记录 |
