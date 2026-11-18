@@ -19,14 +19,18 @@
 namespace navbot_chassis
 {
 
-/// 解析结果。为什么要分成四种而不是只返回 bool：
-/// 「不是我的帧」和「格式坏了」在统计和日志上必须分开，否则排查时无法区分
-/// 是串口噪点还是真的协议不匹配。
+/// 解析结果。为什么要分成五种而不是只返回 bool：
+/// 「不是我的帧」「少字段」「多字段」「数字坏了」在统计和日志上必须分开，
+/// 因为排查方向完全不同：
+///   - 少字段 = 半包被误当完整帧传进来（串口/缓冲问题）
+///   - 多字段 = 两端协议版本不匹配（固件升了、PC 没升）
+/// 这两个混在一起，出问题时你会往错的方向查。
 enum class ParseResult
 {
   kOk,             ///< 解析成功
   kNotAFrame,      ///< 帧头不是 'O'（多半是噪声或下行回显）
-  kTooFewFields,   ///< 字段数 < 11（半包被误当完整帧传进来了）
+  kTooFewFields,   ///< 字段数 < 11（半包）
+  kTooManyFields,  ///< 字段数 > 11（协议版本不匹配）
   kBadNumber,      ///< 某个整数字段解析失败
 };
 
@@ -47,9 +51,12 @@ struct OdomFrame
 };
 
 /// 解析一行 O 帧。行尾的 '\n' / '\r' 允许存在，函数内部忽略。
-/// 字段数 > 11 时只取前 11 个（协议 §7 扩展预留：前 11 个必须存在，多的忽略）。
 ///
-/// TODO(你) 实现。判据见 test_protocol.cpp —— 那里每一条断言就是验收标准。
+/// ★ 字段数必须**严格等于 11**（协议 §5「固定字段数」）：
+///   < 11 → kTooFewFields（半包被当完整帧）
+///   > 11 → kTooManyFields（两端协议版本不匹配）
+///   不做「忽略多余字段」的容错 —— 那条规则在协议 §7 里是给 v2 扩展预留的，
+///   现在启用只会在版本错配时静默把字段读错位，表现为里程计数据全错却不报错。
 ParseResult parse_odom_frame(const std::string & line, OdomFrame & out);
 
 /// 下行 V 帧的内容。
@@ -63,7 +70,7 @@ struct VelCmd
 /// 组装 V 帧，返回值**必须含结尾的 '\n'**（协议 §3）。
 /// 形如 "V,567,120,-120\n"
 ///
-/// TODO(你) 实现。
+/// 注意：本函数只管生成。V 帧的**解析**在 MCU 侧，PC 侧不解析它。
 std::string format_velocity_frame(const VelCmd & cmd);
 
 /// 差速运动学：车体速度 → 左右轮线速度（协议 §3）。
@@ -71,8 +78,6 @@ std::string format_velocity_frame(const VelCmd & cmd);
 ///   v_r = v + ω·L/2
 /// 其中 L = 0.16 m（★ 必须与 URDF 的 wheel_sep 一致）。
 /// 注意：转 mm/s 要**四舍五入**，不是截断 —— 截断会带来系统性偏慢。
-///
-/// TODO(你) 实现。
 void diff_drive_to_wheel_speeds(
   double v_mps, double w_radps,
   int32_t & vel_l_mms, int32_t & vel_r_mms);

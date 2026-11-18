@@ -38,7 +38,7 @@
 | `navbot_description` | URDF/xacro 模型，关节树、惯量、雷达支架 | 完成（7 link + 5 惯性宏） |
 | `navbot_bringup` | launch 文件、Nav2 与 slam_toolbox 参数、Gazebo 世界、地图 | 完成 |
 | `navbot_bridge` | 串口 ↔ ROS 话题桥接（Python 参照实现，448 行） | 完成，36 项测试 |
-| `navbot_chassis` | **C++ 版同一节点**（rclcpp） | 完成，15 项单测 + 端到端 50 Hz |
+| `navbot_chassis` | **C++ 版同一节点**（rclcpp） | 完成，16 项单测 + 端到端 50 Hz |
 
 `navbot_bridge` 与 `navbot_chassis` 是**同一个节点的两种实现**，同时存在是故意的：
 Python 版是标准答案，C++ 版写完后用它逐字段对照，行为不一致就是 C++ 版错了。
@@ -83,14 +83,14 @@ C++ 版已完成，实现说明与踩坑记录见 [`src/navbot_chassis/NOTES_P1.
 │   │   ├── navbot_bridge/chassis_bridge.py   O 帧 → /odom+TF+/joint_states；/cmd_vel → V 帧
 │   │   ├── config/bridge_params.yaml         真机串口参数
 │   │   └── launch/bringup_real.launch.py     真机启动
-│   └── navbot_chassis/             C++ 版同一节点（rclcpp，15 单测）
+│   └── navbot_chassis/             C++ 版同一节点（rclcpp，16 单测）
 │       ├── include/navbot_chassis/
 │       │   ├── protocol.hpp             协议层接口（纯逻辑，零 ROS 依赖）
 │       │   └── chassis_node.hpp         节点类声明（状态一览）
 │       ├── src/
 │       │   ├── protocol.cpp             O/V 帧编解码 + FrameReader
 │       │   └── chassis_node.cpp         rclcpp 节点：读线程 / 定时发布 / 三层异常
-│       ├── test/test_protocol.cpp       15 个 gtest（期望值取自协议 §8 golden vector）
+│       ├── test/test_protocol.cpp       16 个 gtest（期望值取自协议 §8 golden vector）
 │       ├── check_progress.sh            一键看测试进度（通过 N/15）
 │       └── NOTES_P1.md                  实现说明、契约矛盾、踩坑记录
 ├── tools/                          不需要 ROS 技能树也能跑的工具
@@ -424,9 +424,9 @@ ros2 run navbot_chassis chassis_node --ros-args \
 两版行为逐字段一致，**可随时互换**。C++ 版多两个参数：`publish_rate_hz`（默认 50）、
 `data_timeout_s`（默认 0.5）；Python 版同名常量写死在模块顶部。
 
-> ⚠️ 已知契约差异：Python 版 `parse_odom_frame` 要求字段数**严格等于 11**，
-> 而协议文档 §8.3 写的是「12 个字段 → 接受，忽略多余」。C++ 版跟协议文档。
-> 两者必有一处要改，待确认，详见 `src/navbot_chassis/NOTES_P1.md` §4。
+> 两版字段数规则一致：**严格等于 11**（协议 §5）。多一个少一个都当坏帧，
+> 但错误码分开 —— 少字段是半包（查串口），多字段是版本不匹配（查两端固件）。
+> 为什么不用「忽略多余」的容错，见 `src/navbot_chassis/NOTES_P1.md` §4。
 
 ### 数据流
 

@@ -68,24 +68,34 @@ ParseResult parse_odom_frame(const std::string & line, OdomFrame & out)
     return ParseResult::kNotAFrame;
   }
 
-  // ---------- ③ 按 ',' 切分 ----------
-  // 只需要前 11 个字段（f[0] 是 "O"，f[1..10] 是 10 个数字）。
-  // 协议 §7 扩展预留：前 11 个必须存在，多的忽略 → 所以数组开到 12 就够，
-  // 第 12 个字段（如果存在）读进来也无所谓，只要不参与赋值。
-  std::string_view f[11];
-  std::size_t n = 0;
+  // ---------- ③ 按 ',' 切分，并把**总字段数**数出来 ----------
+  // ★ 字段数必须严格等于 11（协议 §5「固定字段数」）。
+  //   所以不能"只取前 11 个就完事" —— 那样 >11 的情况会被悄悄放过。
+  //   必须数清总数，才能区分：
+  //     少字段 = 半包（串口/缓冲问题）→ kTooFewFields
+  //     多字段 = 两端协议版本不匹配（固件升了 PC 没升）→ kTooManyFields
+  //   这两种的排查方向完全不同，混在一起会把你带偏。
+  std::string_view f[11];      // 只存前 11 个，多的丢弃
+  std::size_t total = 0;       // 总字段数（含被丢弃的）
   std::size_t pos = 0;
-  while (n < 11) {
+  while (true) {
     const std::size_t comma = s.find(',', pos);
+    const std::string_view field =
+      (comma == std::string_view::npos) ? s.substr(pos) : s.substr(pos, comma - pos);
+    if (total < 11) {
+      f[total] = field;
+    }
+    ++total;
     if (comma == std::string_view::npos) {
-      f[n++] = s.substr(pos);          // 最后一个字段，没有逗号
       break;
     }
-    f[n++] = s.substr(pos, comma - pos);
     pos = comma + 1;
   }
-  if (n < 11) {
+  if (total < 11) {
     return ParseResult::kTooFewFields;
+  }
+  if (total > 11) {
+    return ParseResult::kTooManyFields;
   }
 
   // ---------- ④ 逐字段转换 ----------

@@ -81,15 +81,27 @@ TEST(OdomParse, RejectsWrongHeader)
     ParseResult::kNotAFrame);
 }
 
-TEST(OdomParse, AcceptsExtraFieldsAndIgnoresThem)
+TEST(OdomParse, RejectsExtraFields)
 {
   OdomFrame f;
-  // 12 个字段：前 11 个必须存在，多的忽略（§7 扩展预留）
-  const auto r = parse_odom_frame(
-    "O,1234,-5820,5815,120,118,420,415,11850,184320,2510,999", f);
-  ASSERT_EQ(r, ParseResult::kOk);
-  EXPECT_EQ(f.seq, 1234u);
-  EXPECT_EQ(f.temp_c100, 2510);   // 第 12 个 999 不该覆盖任何字段
+  // 12 个字段 → 严格 11（协议 §5）。多一个就是两端版本不匹配，不能猜、不能忽略：
+  //   「忽略多余」的容错只会在字段被插入/重排时静默把后面全读错一位，
+  //   表现是里程计数据全错却不报错 —— 比直接丢帧难查得多。
+  EXPECT_EQ(
+    parse_odom_frame("O,1234,-5820,5815,120,118,420,415,11850,184320,2510,999", f),
+    ParseResult::kTooManyFields);
+}
+
+// 字段数分类必须能区分「半包」和「版本不匹配」——两者排查方向完全不同
+TEST(OdomParse, DistinguishesFewFromManyFields)
+{
+  OdomFrame f;
+  EXPECT_EQ(parse_odom_frame("O,1234,-5820", f), ParseResult::kTooFewFields)
+    << "少字段 = 半包，查串口缓冲";
+  EXPECT_EQ(
+    parse_odom_frame("O,1234,-5820,5815,120,118,420,415,11850,184320,2510,1,2", f),
+    ParseResult::kTooManyFields)
+    << "多字段 = 版本不匹配，查两端固件版本";
 }
 
 // ============================================================
