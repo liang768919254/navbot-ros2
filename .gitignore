@@ -53,3 +53,6 @@ tools/verify/frames_*
 tools/verify/sim_fullchain/*.pid
 tools/verify/sim_fullchain/plan_probe.txt
 tools/verify/sim_fullchain/map_built.*
+
+# ==== 闭卷重写用的参考备份（含实现，不进仓库）====
+*.ai
